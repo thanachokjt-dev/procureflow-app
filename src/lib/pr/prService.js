@@ -288,7 +288,7 @@ export async function fetchManagerApprovalQueue({
 }
 
 export async function fetchProcurementQueue({
-  statuses = [PR_STATUSES.APPROVED, 'pending_variance_confirmation', PR_STATUSES.CONVERTED_TO_PO, PR_STATUSES.CLOSED],
+  statuses = [PR_STATUSES.APPROVED],
   searchTerm = '',
   department = '',
   limit = 300,

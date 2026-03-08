@@ -12,20 +12,11 @@ import { getPrStatusLabel, normalizePrStatus } from '../lib/workflow/statusHelpe
 
 const PROCUREMENT_QUEUE_STATUSES = [
   PR_STATUSES.APPROVED,
-  'pending_variance_confirmation',
-  PR_STATUSES.CONVERTED_TO_PO,
-  PR_STATUSES.CLOSED,
 ]
 
 const baseStatusOptions = [
   { value: 'all', label: 'All Statuses' },
   { value: PR_STATUSES.APPROVED, label: getPrStatusLabel(PR_STATUSES.APPROVED) },
-  {
-    value: 'pending_variance_confirmation',
-    label: getPrStatusLabel('pending_variance_confirmation'),
-  },
-  { value: PR_STATUSES.CONVERTED_TO_PO, label: getPrStatusLabel(PR_STATUSES.CONVERTED_TO_PO) },
-  { value: PR_STATUSES.CLOSED, label: getPrStatusLabel(PR_STATUSES.CLOSED) },
 ]
 
 function getPrEstimatedTotal(prRecord) {
@@ -241,7 +232,7 @@ function ProcurementQueuePage() {
     <div className="space-y-6">
       <PageHeader
         title="Procurement Queue"
-        subtitle="Operate sourcing pipeline from approved PRs and continue PO preparation."
+        subtitle="Review approved PRs and start PO sourcing work."
       />
 
       {flashMessage ? (
@@ -399,22 +390,6 @@ function ProcurementQueuePage() {
                         >
                           View
                         </button>
-                        {normalizePrStatus(item.status) === 'pending_variance_confirmation' &&
-                        poDraftByPrId[item.id] ? (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              navigate(
-                                `/variance-confirmation?poId=${encodeURIComponent(
-                                  poDraftByPrId[item.id].id,
-                                )}`,
-                              )
-                            }
-                            className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
-                          >
-                            Variance Review
-                          </button>
-                        ) : null}
                         {canStartOrContinuePoDraft({
                           status: item.status,
                           hasExistingPoDraft: poDraftByPrId[item.id],

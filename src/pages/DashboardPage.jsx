@@ -4,7 +4,7 @@ import StatusBadge from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
 import { fetchVisiblePrRecords } from '../lib/pr/prService'
-import { ROLE_LABELS } from '../lib/roles'
+import { ROLE_LABELS, ROLES } from '../lib/roles'
 import { PR_STATUSES } from '../lib/workflow/constants'
 import { getPrStatusLabel, normalizePrStatus } from '../lib/workflow/statusHelpers'
 
@@ -66,6 +66,9 @@ function DashboardPage() {
     const submittedCount = prRecords.filter(
       (item) => normalizePrStatus(item.status) === PR_STATUSES.SUBMITTED,
     ).length
+    const approvedCount = prRecords.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.APPROVED,
+    ).length
     const approvedThisMonth = prRecords.filter((item) => {
       if (normalizePrStatus(item.status) !== PR_STATUSES.APPROVED) {
         return false
@@ -77,13 +80,28 @@ function DashboardPage() {
 
     const monthlySpend = approvedThisMonth.reduce((sum, item) => sum + getPrEstimatedTotal(item), 0)
 
-    return [
+    const summaryCards = [
       { label: 'Visible Requests', value: prRecords.length, hint: 'Based on your role' },
-      { label: 'Submitted PRs', value: submittedCount, hint: 'Waiting for decision' },
+      {
+        label:
+          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+            ? 'Ready For Procurement'
+            : 'Submitted PRs',
+        value:
+          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+            ? approvedCount
+            : submittedCount,
+        hint:
+          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+            ? 'Matches Procurement Queue scope'
+            : 'Waiting for decision',
+      },
       { label: 'Monthly Spend', value: formatCurrency(monthlySpend), hint: 'Approved PRs this month' },
       { label: 'Approved This Month', value: approvedThisMonth.length, hint: 'Current calendar month' },
     ]
-  }, [prRecords])
+
+    return summaryCards
+  }, [prRecords, role])
 
   const spendByDepartment = useMemo(() => {
     const departmentMap = new Map()
