@@ -80,6 +80,20 @@ export const SIDEBAR_ROLE_ACCESS = {
   [PAGE_KEYS.WORKFLOW_DEBUG]: [APP_ROLES.ADMIN],
 }
 
+export const SIDEBAR_USER_OVERRIDES = {
+  'kunlanit.s@bangtaomuaythai.com': [
+    PAGE_KEYS.DASHBOARD,
+    PAGE_KEYS.NEW_REQUEST,
+    PAGE_KEYS.REQUESTS,
+  ],
+}
+
+function normalizeEmail(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+}
+
 export const ACTION_ROLE_ACCESS = {
   [APPROVAL_ACTIONS.SUBMIT]: APP_ROLE_LIST,
   [APPROVAL_ACTIONS.APPROVE]: [APP_ROLES.MANAGER, APP_ROLES.ADMIN],
@@ -132,7 +146,14 @@ export function canPerformAction(role, actionName) {
   return hasAnyRole(role, allowedRoles)
 }
 
-export function canSeeSidebarItem(role, pageKey) {
+export function canSeeSidebarItem(role, pageKey, userEmail = '') {
+  const normalizedEmail = normalizeEmail(userEmail)
+  const overridePages = SIDEBAR_USER_OVERRIDES[normalizedEmail] || []
+
+  if (overridePages.includes(pageKey)) {
+    return true
+  }
+
   const allowedRoles = SIDEBAR_ROLE_ACCESS[pageKey] || []
   return hasAnyRole(role, allowedRoles)
 }

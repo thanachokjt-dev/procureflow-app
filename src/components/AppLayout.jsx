@@ -59,7 +59,9 @@ function AppLayout() {
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState('')
 
-  const visibleNavItems = navItems.filter((item) => canSeeSidebarItem(role, item.pageKey))
+  const visibleNavItems = navItems.filter((item) =>
+    canSeeSidebarItem(role, item.pageKey, user?.email),
+  )
   const { mode, mainSpacingClass, contentContainerClass } = getPageLayoutConfig({
     pathname: location.pathname,
     role,
