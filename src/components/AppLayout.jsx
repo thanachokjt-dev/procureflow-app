@@ -2,53 +2,53 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { getPageLayoutConfig } from '../lib/layout/pageLayout'
-import { PAGE_KEYS, PAGE_ROLE_ACCESS, ROLE_LABELS, hasRoleAccess } from '../lib/roles'
+import { PAGE_KEYS, ROLE_LABELS, canSeeSidebarItem } from '../lib/roles'
 
 const navItems = [
   {
     to: '/dashboard',
     label: 'Dashboard',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.DASHBOARD],
+    pageKey: PAGE_KEYS.DASHBOARD,
   },
   {
     to: '/new-request',
     label: 'Create PR',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST],
+    pageKey: PAGE_KEYS.NEW_REQUEST,
   },
   {
     to: '/requests',
     label: 'Requests',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.REQUESTS],
+    pageKey: PAGE_KEYS.REQUESTS,
   },
   {
     to: '/manager-approval',
     label: 'Manager Approval',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.MANAGER_APPROVAL],
+    pageKey: PAGE_KEYS.MANAGER_APPROVAL,
   },
   {
     to: '/variance-confirmation',
     label: 'Variance Confirmation',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.VARIANCE_CONFIRMATION],
+    pageKey: PAGE_KEYS.VARIANCE_CONFIRMATION,
   },
   {
     to: '/procurement-queue',
     label: 'Procurement Queue',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.PROCUREMENT_QUEUE],
+    pageKey: PAGE_KEYS.PROCUREMENT_QUEUE,
   },
   {
     to: '/supplier-master',
     label: 'Supplier Master',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.SUPPLIER_MASTER],
+    pageKey: PAGE_KEYS.SUPPLIER_MASTER,
   },
   {
     to: '/item-master',
     label: 'Item Master',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.ITEM_MASTER],
+    pageKey: PAGE_KEYS.ITEM_MASTER,
   },
   {
     to: '/workflow-debug',
     label: 'Workflow Debug',
-    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.WORKFLOW_DEBUG],
+    pageKey: PAGE_KEYS.WORKFLOW_DEBUG,
   },
 ]
 
@@ -59,7 +59,7 @@ function AppLayout() {
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState('')
 
-  const visibleNavItems = navItems.filter((item) => hasRoleAccess(role, item.roles))
+  const visibleNavItems = navItems.filter((item) => canSeeSidebarItem(role, item.pageKey))
   const { mode, mainSpacingClass, contentContainerClass } = getPageLayoutConfig({
     pathname: location.pathname,
     role,
