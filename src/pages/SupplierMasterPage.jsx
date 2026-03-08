@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
-import {
-  downloadCsvTemplate,
-  getMissingRequiredColumns,
-  parseCsvBoolean,
-  parseCsvFile,
-} from '../lib/csvImport'
+import { downloadCsvTemplate } from '../lib/csvImport'
 import {
   createSupplier,
   deleteSupplier,
   fetchSuppliers,
   supplierCodeExists,
   updateSupplier,
-  upsertSuppliers,
 } from '../lib/masterData'
+import {
+  createSupplierImportPreview,
+  downloadSupplierImportErrorsCsv,
+  SUPPLIER_IMPORT_MODES,
+  SUPPLIER_IMPORT_OPTIONAL_COLUMNS,
+  SUPPLIER_IMPORT_REQUIRED_COLUMNS,
+  SUPPLIER_IMPORT_TEMPLATE_COLUMNS,
+  runSupplierImport,
+} from '../lib/supplierCsvImport'
 import { hasRoleAccess, ROLES } from '../lib/roles'
 
 const initialSupplierForm = {
@@ -23,6 +26,8 @@ const initialSupplierForm = {
   contact_name: '',
   email: '',
   phone: '',
+  address: '',
+  tax_id: '',
   payment_terms: '',
   lead_time_days: '',
   currency: 'USD',
@@ -30,78 +35,23 @@ const initialSupplierForm = {
   active: true,
 }
 
-const supplierTemplateColumns = [
-  'supplier_code',
-  'supplier_name',
-  'contact_name',
-  'email',
-  'phone',
-  'payment_terms',
-  'lead_time_days',
-  'currency',
-  'notes',
-  'active',
+const importModeOptions = [
+  {
+    value: SUPPLIER_IMPORT_MODES.CREATE_ONLY,
+    label: 'Create only',
+    description: 'Skip rows where supplier code already exists.',
+  },
+  {
+    value: SUPPLIER_IMPORT_MODES.UPDATE_ONLY,
+    label: 'Update only',
+    description: 'Update rows only when supplier code already exists.',
+  },
+  {
+    value: SUPPLIER_IMPORT_MODES.UPSERT,
+    label: 'Upsert',
+    description: 'Create new supplier codes and update existing supplier codes.',
+  },
 ]
-
-const supplierRequiredColumns = ['supplier_code', 'supplier_name']
-
-function buildSupplierPayloadFromCsv(values) {
-  const errors = []
-
-  const supplierCode = String(values.supplier_code || '').trim()
-  const supplierName = String(values.supplier_name || '').trim()
-  const contactName = String(values.contact_name || '').trim()
-  const email = String(values.email || '').trim()
-  const phone = String(values.phone || '').trim()
-  const paymentTerms = String(values.payment_terms || '').trim()
-  const leadTimeRaw = String(values.lead_time_days || '').trim()
-  const currency = String(values.currency || '').trim().toUpperCase()
-  const notes = String(values.notes || '').trim()
-
-  if (!supplierCode) {
-    errors.push('supplier_code is required.')
-  }
-
-  if (!supplierName) {
-    errors.push('supplier_name is required.')
-  }
-
-  if (email && !email.includes('@')) {
-    errors.push('email format is invalid.')
-  }
-
-  let leadTimeDays = null
-  if (leadTimeRaw) {
-    const parsedLeadTime = Number(leadTimeRaw)
-
-    if (Number.isNaN(parsedLeadTime) || parsedLeadTime < 0) {
-      errors.push('lead_time_days must be zero or greater.')
-    } else {
-      leadTimeDays = Math.floor(parsedLeadTime)
-    }
-  }
-
-  const activeResult = parseCsvBoolean(values.active, true)
-  if (activeResult.error) {
-    errors.push(activeResult.error)
-  }
-
-  return {
-    errors,
-    payload: {
-      supplier_code: supplierCode,
-      supplier_name: supplierName,
-      contact_name: contactName || null,
-      email: email || null,
-      phone: phone || null,
-      payment_terms: paymentTerms || null,
-      lead_time_days: leadTimeDays,
-      currency: currency || 'USD',
-      notes: notes || null,
-      active: activeResult.value,
-    },
-  }
-}
 
 function SupplierMasterPage() {
   const { role } = useAuth()
@@ -116,8 +66,10 @@ function SupplierMasterPage() {
   const [formValues, setFormValues] = useState(initialSupplierForm)
   const [editingSupplierId, setEditingSupplierId] = useState(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [importMode, setImportMode] = useState(SUPPLIER_IMPORT_MODES.UPSERT)
   const [importPreview, setImportPreview] = useState(null)
   const [isImporting, setIsImporting] = useState(false)
+  const [importSummary, setImportSummary] = useState(null)
 
   const loadSuppliers = async () => {
     setLoading(true)
@@ -200,6 +152,8 @@ function SupplierMasterPage() {
       contact_name: formValues.contact_name.trim() || null,
       email: formValues.email.trim() || null,
       phone: formValues.phone.trim() || null,
+      address: formValues.address.trim() || null,
+      tax_id: formValues.tax_id.trim() || null,
       payment_terms: formValues.payment_terms.trim() || null,
       lead_time_days:
         formValues.lead_time_days === '' ? null : Number(formValues.lead_time_days),
@@ -263,17 +217,18 @@ function SupplierMasterPage() {
   }
 
   const handleCsvTemplateDownload = () => {
-    downloadCsvTemplate('supplier_import_template.csv', supplierTemplateColumns, [
+    downloadCsvTemplate('supplier_import_template.csv', SUPPLIER_IMPORT_TEMPLATE_COLUMNS, [
       {
         supplier_code: 'SUP-001',
         supplier_name: 'Acme Supplies Co.',
         contact_name: 'Jane Buyer',
         email: 'jane@acme.example',
         phone: '+1-555-0100',
+        address: '123 Market St, New York, NY',
+        tax_id: 'TAX-12345',
         payment_terms: 'Net 30',
         lead_time_days: '14',
         currency: 'USD',
-        notes: 'Preferred office supplier',
         active: 'true',
       },
     ])
@@ -289,58 +244,22 @@ function SupplierMasterPage() {
 
     setErrorMessage('')
     setSuccessMessage('')
+    setImportSummary(null)
 
-    const { headers, normalizedHeaders, records, parseError } = await parseCsvFile(selectedFile)
+    const { preview, error } = await createSupplierImportPreview(selectedFile)
 
-    if (parseError) {
+    if (error) {
       setImportPreview(null)
-      setErrorMessage(parseError)
+      setErrorMessage(error)
       return
     }
 
-    const missingColumns = getMissingRequiredColumns(normalizedHeaders, supplierRequiredColumns)
-
-    if (missingColumns.length > 0) {
-      setImportPreview(null)
-      setErrorMessage(`Missing required columns: ${missingColumns.join(', ')}`)
-      return
-    }
-
-    if (!records.length) {
-      setImportPreview(null)
-      setErrorMessage('CSV file has no data rows.')
-      return
-    }
-
-    const validRows = []
-    const invalidRows = []
-
-    records.forEach((record) => {
-      const { errors, payload } = buildSupplierPayloadFromCsv(record.values)
-
-      if (errors.length > 0) {
-        invalidRows.push({
-          rowNumber: record.rowNumber,
-          errors,
-        })
-        return
-      }
-
-      validRows.push(payload)
-    })
-
-    setImportPreview({
-      fileName: selectedFile.name,
-      headers,
-      validRows,
-      invalidRows,
-      totalRows: records.length,
-    })
+    setImportPreview(preview)
   }
 
   const handleImportSuppliers = async () => {
-    if (!importPreview || importPreview.validRows.length === 0) {
-      setErrorMessage('No valid supplier rows to import.')
+    if (!importPreview) {
+      setErrorMessage('Upload and preview a CSV file first.')
       return
     }
 
@@ -348,19 +267,29 @@ function SupplierMasterPage() {
     setErrorMessage('')
     setSuccessMessage('')
 
-    const { error } = await upsertSuppliers(importPreview.validRows)
+    const { summary: resultSummary, error } = await runSupplierImport({
+      preview: importPreview,
+      mode: importMode,
+    })
 
     if (error) {
-      setErrorMessage(`Supplier import failed: ${error.message}`)
+      setErrorMessage(`Supplier import failed: ${error}`)
       setIsImporting(false)
       return
     }
 
-    setSuccessMessage(
-      `Supplier import complete. Upserted ${importPreview.validRows.length} row(s) and skipped ${importPreview.invalidRows.length} invalid row(s).`,
-    )
+    setImportSummary(resultSummary)
+    setSuccessMessage('Supplier import finished. Review the summary below.')
     setIsImporting(false)
     await loadSuppliers()
+  }
+
+  const handleDownloadFailedRowsCsv = () => {
+    if (!importSummary?.failedRows?.length) {
+      return
+    }
+
+    downloadSupplierImportErrorsCsv('supplier_import_failed_rows.csv', importSummary.failedRows)
   }
 
   const handleEdit = (supplier) => {
@@ -371,6 +300,8 @@ function SupplierMasterPage() {
       contact_name: supplier.contact_name || '',
       email: supplier.email || '',
       phone: supplier.phone || '',
+      address: supplier.address || '',
+      tax_id: supplier.tax_id || '',
       payment_terms: supplier.payment_terms || '',
       lead_time_days:
         supplier.lead_time_days === null || supplier.lead_time_days === undefined
@@ -445,17 +376,20 @@ function SupplierMasterPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[1.7fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[1.8fr_1fr]">
         <section className="space-y-3">
           {canImport ? (
             <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
                     CSV Import
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    Required columns: {supplierRequiredColumns.join(', ')}
+                    Required: {SUPPLIER_IMPORT_REQUIRED_COLUMNS.join(', ')}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Optional: {SUPPLIER_IMPORT_OPTIONAL_COLUMNS.join(', ')}
                   </p>
                 </div>
                 <button
@@ -467,12 +401,39 @@ function SupplierMasterPage() {
                 </button>
               </div>
 
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleCsvFileChange}
-                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-100"
-              />
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Import Mode
+                  </label>
+                  <select
+                    value={importMode}
+                    onChange={(event) => setImportMode(event.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                  >
+                    {importModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {importModeOptions.find((option) => option.value === importMode)?.description}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Upload CSV
+                  </label>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleCsvFileChange}
+                    className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-100"
+                  />
+                </div>
+              </div>
 
               {importPreview ? (
                 <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
@@ -482,15 +443,18 @@ function SupplierMasterPage() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setImportPreview(null)}
+                      onClick={() => {
+                        setImportPreview(null)
+                        setImportSummary(null)
+                      }}
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                     >
-                      Clear Preview
+                      Clear
                     </button>
                   </div>
 
                   <div className="grid gap-2 text-xs text-slate-600 md:grid-cols-3">
-                    <p>Total rows: {importPreview.totalRows}</p>
+                    <p>Total rows detected: {importPreview.totalRows}</p>
                     <p className="text-emerald-700">Valid rows: {importPreview.validRows.length}</p>
                     <p className="text-rose-700">Invalid rows: {importPreview.invalidRows.length}</p>
                   </div>
@@ -503,54 +467,77 @@ function SupplierMasterPage() {
                   >
                     {isImporting
                       ? 'Importing...'
-                      : `Import ${importPreview.validRows.length} Valid Row(s)`}
+                      : `Run Import (${importModeOptions.find((option) => option.value === importMode)?.label})`}
                   </button>
 
-                  {importPreview.validRows.length > 0 ? (
-                    <div className="overflow-x-auto rounded-md border border-slate-200">
-                      <table className="min-w-full border-collapse text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                            <th className="px-2 py-2 font-medium">Code</th>
-                            <th className="px-2 py-2 font-medium">Supplier Name</th>
-                            <th className="px-2 py-2 font-medium">Currency</th>
-                            <th className="px-2 py-2 font-medium">Active</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {importPreview.validRows.slice(0, 5).map((row, index) => (
-                            <tr key={`${row.supplier_code}-${index}`} className="border-b border-slate-100 last:border-0">
-                              <td className="px-2 py-2">{row.supplier_code}</td>
-                              <td className="px-2 py-2">{row.supplier_name}</td>
-                              <td className="px-2 py-2">{row.currency}</td>
-                              <td className="px-2 py-2">{row.active ? 'true' : 'false'}</td>
+                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                    <table className="min-w-full border-collapse text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                          <th className="px-2 py-2 font-medium">Row</th>
+                          <th className="px-2 py-2 font-medium">Code</th>
+                          <th className="px-2 py-2 font-medium">Supplier Name</th>
+                          <th className="px-2 py-2 font-medium">Status</th>
+                          <th className="px-2 py-2 font-medium">Errors</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.rows.slice(0, 20).map((row) => {
+                          const isValid = row.errors.length === 0
+
+                          return (
+                            <tr key={`preview-row-${row.rowNumber}`} className="border-b border-slate-100 last:border-0">
+                              <td className="px-2 py-2">{row.rowNumber}</td>
+                              <td className="px-2 py-2">{row.rowValues.supplier_code || '-'}</td>
+                              <td className="px-2 py-2">{row.rowValues.supplier_name || '-'}</td>
+                              <td className="px-2 py-2">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                    isValid
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-rose-50 text-rose-700'
+                                  }`}
+                                >
+                                  {isValid ? 'Valid' : 'Invalid'}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2 text-rose-700">
+                                {isValid ? '-' : row.errors.join(' ')}
+                              </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
 
-                  {importPreview.validRows.length > 5 ? (
-                    <p className="text-xs text-slate-500">
-                      Showing first 5 valid rows in preview.
-                    </p>
+                  {importPreview.rows.length > 20 ? (
+                    <p className="text-xs text-slate-500">Showing first 20 rows in preview.</p>
                   ) : null}
+                </div>
+              ) : null}
 
-                  {importPreview.invalidRows.length > 0 ? (
-                    <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-                      <p className="font-medium">Invalid rows (not imported):</p>
-                      <ul className="mt-2 list-disc space-y-1 pl-5">
-                        {importPreview.invalidRows.slice(0, 10).map((row) => (
-                          <li key={`invalid-supplier-row-${row.rowNumber}`}>
-                            Row {row.rowNumber}: {row.errors.join(' ')}
-                          </li>
-                        ))}
-                      </ul>
-                      {importPreview.invalidRows.length > 10 ? (
-                        <p className="mt-2">Showing first 10 invalid rows.</p>
-                      ) : null}
-                    </div>
+              {importSummary ? (
+                <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Import Result Summary
+                  </h4>
+                  <div className="grid gap-2 text-xs text-slate-700 md:grid-cols-5">
+                    <p>Total: {importSummary.totalRows}</p>
+                    <p className="text-emerald-700">Created: {importSummary.created}</p>
+                    <p className="text-sky-700">Updated: {importSummary.updated}</p>
+                    <p className="text-amber-700">Skipped: {importSummary.skipped}</p>
+                    <p className="text-rose-700">Failed: {importSummary.failed}</p>
+                  </div>
+
+                  {importSummary.failed > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleDownloadFailedRowsCsv}
+                      className="rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                    >
+                      Download Failed Rows CSV
+                    </button>
                   ) : null}
                 </div>
               ) : null}
@@ -601,8 +588,11 @@ function SupplierMasterPage() {
                   <th className="px-3 py-2.5 font-medium">Code</th>
                   <th className="px-3 py-2.5 font-medium">Supplier Name</th>
                   <th className="px-3 py-2.5 font-medium">Contact</th>
+                  <th className="px-3 py-2.5 font-medium">Email</th>
+                  <th className="px-3 py-2.5 font-medium">Phone</th>
                   <th className="px-3 py-2.5 font-medium">Payment Terms</th>
                   <th className="px-3 py-2.5 font-medium">Lead Time</th>
+                  <th className="px-3 py-2.5 font-medium">Currency</th>
                   <th className="px-3 py-2.5 font-medium">Status</th>
                   <th className="px-3 py-2.5 font-medium">Actions</th>
                 </tr>
@@ -610,7 +600,7 @@ function SupplierMasterPage() {
               <tbody className="bg-white">
                 {loading ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={10}>
                       Loading suppliers...
                     </td>
                   </tr>
@@ -618,7 +608,7 @@ function SupplierMasterPage() {
 
                 {!loading && suppliers.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={10}>
                       No suppliers match the current filters.
                     </td>
                   </tr>
@@ -627,15 +617,14 @@ function SupplierMasterPage() {
                 {!loading
                   ? suppliers.map((supplier) => (
                       <tr key={supplier.id} className="border-b border-slate-100 last:border-0">
-                        <td className="px-3 py-3 font-medium text-slate-700">
-                          {supplier.supplier_code}
-                        </td>
+                        <td className="px-3 py-3 font-medium text-slate-700">{supplier.supplier_code}</td>
                         <td className="px-3 py-3 text-slate-700">{supplier.supplier_name}</td>
                         <td className="px-3 py-3 text-slate-600">{supplier.contact_name || '-'}</td>
-                        <td className="px-3 py-3 text-slate-600">
-                          {supplier.payment_terms || '-'}
-                        </td>
+                        <td className="px-3 py-3 text-slate-600">{supplier.email || '-'}</td>
+                        <td className="px-3 py-3 text-slate-600">{supplier.phone || '-'}</td>
+                        <td className="px-3 py-3 text-slate-600">{supplier.payment_terms || '-'}</td>
                         <td className="px-3 py-3 text-slate-600">{supplier.lead_time_days ?? '-'}</td>
+                        <td className="px-3 py-3 text-slate-600">{supplier.currency || '-'}</td>
                         <td className="px-3 py-3">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${
@@ -726,6 +715,22 @@ function SupplierMasterPage() {
 
             <input
               type="text"
+              placeholder="Address"
+              value={formValues.address}
+              onChange={handleChange('address')}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+
+            <input
+              type="text"
+              placeholder="Tax ID"
+              value={formValues.tax_id}
+              onChange={handleChange('tax_id')}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+            />
+
+            <input
+              type="text"
               placeholder="Payment Terms (e.g. Net 30)"
               value={formValues.payment_terms}
               onChange={handleChange('payment_terms')}
@@ -751,7 +756,7 @@ function SupplierMasterPage() {
             />
 
             <textarea
-              rows={3}
+              rows={2}
               placeholder="Notes"
               value={formValues.notes}
               onChange={handleChange('notes')}

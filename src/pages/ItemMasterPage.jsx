@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
+import ItemSupplierMappingModal from '../components/ItemSupplierMappingModal'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
 import { downloadCsvTemplate } from '../lib/csvImport'
+import { formatCurrency } from '../lib/formatters'
 import {
   createItem,
   deleteItem,
   fetchItems,
+  fetchPreferredSupplierSnapshots,
   skuExists,
   updateItem,
 } from '../lib/masterData'
@@ -71,6 +74,38 @@ function ItemMasterPage() {
   const [importPreview, setImportPreview] = useState(null)
   const [isImporting, setIsImporting] = useState(false)
   const [importSummary, setImportSummary] = useState(null)
+  const [preferredByItemId, setPreferredByItemId] = useState({})
+  const [mappingModalItem, setMappingModalItem] = useState(null)
+
+  const loadPreferredSnapshots = async (itemRows = []) => {
+    const itemIds = itemRows.map((item) => item.id)
+
+    if (!itemIds.length) {
+      setPreferredByItemId({})
+      return
+    }
+
+    const { data, error } = await fetchPreferredSupplierSnapshots(itemIds)
+
+    if (error) {
+      setErrorMessage(error.message)
+      setPreferredByItemId({})
+      return
+    }
+
+    const snapshotMap = {}
+    ;(data || []).forEach((snapshot) => {
+      snapshotMap[snapshot.item_id] = {
+        supplierName: snapshot.suppliers?.supplier_name || '',
+        supplierCode: snapshot.suppliers?.supplier_code || '',
+        unitPrice: snapshot.unit_price,
+        currency: snapshot.currency || 'USD',
+        lastPriceDate: snapshot.last_price_date || null,
+      }
+    })
+
+    setPreferredByItemId(snapshotMap)
+  }
 
   const loadItems = async () => {
     setLoading(true)
@@ -81,11 +116,14 @@ function ItemMasterPage() {
     if (error) {
       setErrorMessage(error.message)
       setItems([])
+      setPreferredByItemId({})
       setLoading(false)
       return
     }
 
-    setItems(data || [])
+    const rows = data || []
+    setItems(rows)
+    await loadPreferredSnapshots(rows)
     setLoading(false)
   }
 
@@ -331,9 +369,16 @@ function ItemMasterPage() {
     await loadItems()
   }
 
+  const handleMappingSaved = async () => {
+    await loadItems()
+  }
+
   return (
     <div className="space-y-6">
-      <PageHeader title="Item Master" subtitle="Manage approved catalog items." />
+      <PageHeader
+        title="Item Master"
+        subtitle="Manage approved catalog items and supplier pricing links."
+      />
 
       {errorMessage ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
@@ -587,6 +632,8 @@ function ItemMasterPage() {
                   <th className="px-3 py-2.5 font-medium">Item Name</th>
                   <th className="px-3 py-2.5 font-medium">Category</th>
                   <th className="px-3 py-2.5 font-medium">Brand / Model</th>
+                  <th className="px-3 py-2.5 font-medium">Preferred Supplier</th>
+                  <th className="px-3 py-2.5 font-medium">Last Price</th>
                   <th className="px-3 py-2.5 font-medium">Unit</th>
                   <th className="px-3 py-2.5 font-medium">Status</th>
                   <th className="px-3 py-2.5 font-medium">Actions</th>
@@ -595,7 +642,7 @@ function ItemMasterPage() {
               <tbody className="bg-white">
                 {loading ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={8}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={10}>
                       Loading items...
                     </td>
                   </tr>
@@ -603,15 +650,18 @@ function ItemMasterPage() {
 
                 {!loading && items.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={8}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={10}>
                       No items match the current filters.
                     </td>
                   </tr>
                 ) : null}
 
                 {!loading
-                  ? items.map((item) => (
-                      <tr key={item.id} className="border-b border-slate-100 last:border-0">
+                  ? items.map((item) => {
+                      const preferredSupplier = preferredByItemId[item.id]
+
+                      return (
+                        <tr key={item.id} className="border-b border-slate-100 last:border-0">
                         <td className="px-3 py-3">
                           {item.image_url ? (
                             <img
@@ -630,6 +680,30 @@ function ItemMasterPage() {
                         <td className="px-3 py-3 text-slate-600">
                           {[item.brand, item.model].filter(Boolean).join(' / ') || '-'}
                         </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {preferredSupplier ? (
+                            <div>
+                              <p className="font-medium text-slate-700">
+                                {preferredSupplier.supplierName}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {preferredSupplier.supplierCode || '-'}
+                              </p>
+                            </div>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">
+                          {preferredSupplier &&
+                          preferredSupplier.unitPrice !== null &&
+                          preferredSupplier.unitPrice !== undefined
+                            ? formatCurrency(
+                                Number(preferredSupplier.unitPrice),
+                                preferredSupplier.currency || 'USD',
+                              )
+                            : '-'}
+                        </td>
                         <td className="px-3 py-3 text-slate-600">{item.unit || '-'}</td>
                         <td className="px-3 py-3">
                           <span
@@ -643,7 +717,14 @@ function ItemMasterPage() {
                           </span>
                         </td>
                         <td className="px-3 py-3">
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setMappingModalItem(item)}
+                              className="rounded-md border border-sky-300 bg-white px-2 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50"
+                            >
+                              Suppliers
+                            </button>
                             <button
                               type="button"
                               onClick={() => handleEdit(item)}
@@ -660,8 +741,9 @@ function ItemMasterPage() {
                             </button>
                           </div>
                         </td>
-                      </tr>
-                    ))
+                        </tr>
+                      )
+                    })
                   : null}
               </tbody>
             </table>
@@ -793,6 +875,13 @@ function ItemMasterPage() {
           </form>
         </section>
       </div>
+
+      <ItemSupplierMappingModal
+        item={mappingModalItem}
+        isOpen={Boolean(mappingModalItem)}
+        onClose={() => setMappingModalItem(null)}
+        onSaved={handleMappingSaved}
+      />
     </div>
   )
 }

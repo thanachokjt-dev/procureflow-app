@@ -4,7 +4,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Supabase email/password authentication
 - Role-based access control (`staff`, `manager`, `admin`)
 - Row Level Security policies in PostgreSQL
-- Phase 1 master data modules (Supplier Master, Item Master)
+- Supplier Master + Item Master + Item-Supplier Mapping
 
 ## Features
 - Sign in / sign out with session persistence
@@ -14,6 +14,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Manager can view pending requests and approve/reject
 - Admin can access everything
 - Manager/Admin can manage Supplier Master and Item Master
+- Manager/Admin can manage Item-Supplier Mapping (one preferred supplier per item)
 - Manager/Admin can import Supplier and Item CSV files with preview and upsert
 - New Request supports multiple line items
 - New Request uses Supplier Master + Item Master selections
@@ -53,12 +54,14 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/schema.sql`
    - `supabase/procurement_schema.sql`
    - `supabase/master_data_phase1.sql`
+   - `supabase/master_data_phase2.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
    - `purchase_request_items`
    - `suppliers`
    - `items`
+   - `item_supplier_map`
    - RLS policies for `staff`, `manager`, `admin`
 
 ## 4) Create Users and Assign Roles
@@ -93,19 +96,30 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    npm run lint
    ```
 
-## 7) Phase 2 CSV Import (Manager/Admin)
+## 7) Master Data + CSV Import (Manager/Admin)
 - Supplier Master import:
-  - Upsert key: `supplier_code`
+  - Key: `supplier_code`
   - Required columns: `supplier_code`, `supplier_name`
+  - Modes: `Create only`, `Update only`, `Upsert`
 - Item Master import:
-  - Upsert key: `sku`
+  - Key: `sku`
   - Required columns: `sku`, `item_name`, `unit`
+  - Modes: `Create only`, `Update only`, `Upsert`
 - Steps:
   1. Open `Supplier Master` or `Item Master`
   2. Click `Download Template`
   3. Fill the CSV with your data
   4. Upload the file and review preview/invalid rows
-  5. Click import to upsert valid rows only
+  5. Select mode and run import
+
+## 8) Item-Supplier Mapping (Manager/Admin)
+1. Open `Item Master`
+2. Click `Suppliers` on any item row
+3. Add/Edit mapping fields:
+   - `supplier_sku`, `supplier_item_name`, `unit_price`, `currency`
+   - `moq`, `lead_time_days`, `is_preferred`, `last_price_date`, `remarks`, `active`
+4. Only one preferred supplier can exist per item (enforced in database)
+5. Item table shows preferred supplier and last known price
 
 ## Environment Files
 - `.env.example` is a template
@@ -116,6 +130,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 src/
   components/
     AppLayout.jsx
+    ItemSupplierMappingModal.jsx
     ProtectedRoute.jsx
     PublicRoute.jsx
     PageHeader.jsx
@@ -143,4 +158,5 @@ supabase/
   schema.sql
   procurement_schema.sql
   master_data_phase1.sql
+  master_data_phase2.sql
 ```

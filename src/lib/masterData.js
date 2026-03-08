@@ -18,7 +18,7 @@ export async function fetchSuppliers({ searchTerm = '', activeFilter = 'all' } =
   let query = supabase
     .from('suppliers')
     .select(
-      'id, supplier_code, supplier_name, contact_name, email, phone, payment_terms, lead_time_days, currency, notes, active, created_at, updated_at',
+      'id, supplier_code, supplier_name, contact_name, email, phone, address, tax_id, payment_terms, lead_time_days, currency, notes, active, created_at, updated_at',
     )
     .order('supplier_name', { ascending: true })
 
@@ -39,7 +39,7 @@ export async function fetchActiveSuppliers() {
   return supabase
     .from('suppliers')
     .select(
-      'id, supplier_code, supplier_name, contact_name, email, phone, payment_terms, lead_time_days, currency, active',
+      'id, supplier_code, supplier_name, contact_name, email, phone, address, tax_id, payment_terms, lead_time_days, currency, active',
     )
     .eq('active', true)
     .order('supplier_name', { ascending: true })
@@ -74,8 +74,48 @@ export async function upsertSuppliers(rows = []) {
   return { data: allData, error: null }
 }
 
+export async function fetchExistingSupplierCodes(codes = []) {
+  const normalizedCodes = Array.from(
+    new Set(codes.map((code) => String(code || '').trim()).filter(Boolean)),
+  )
+
+  if (!normalizedCodes.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 500
+  const existingCodes = []
+
+  for (let index = 0; index < normalizedCodes.length; index += batchSize) {
+    const batch = normalizedCodes.slice(index, index + batchSize)
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('supplier_code')
+      .in('supplier_code', batch)
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    existingCodes.push(
+      ...(data || []).map((row) => String(row.supplier_code || '').trim()),
+    )
+  }
+
+  return { data: Array.from(new Set(existingCodes)), error: null }
+}
+
 export async function updateSupplier(supplierId, payload) {
   return supabase.from('suppliers').update(payload).eq('id', supplierId).select().single()
+}
+
+export async function updateSupplierByCode(supplierCode, payload) {
+  return supabase
+    .from('suppliers')
+    .update(payload)
+    .eq('supplier_code', supplierCode)
+    .select('id, supplier_code')
+    .maybeSingle()
 }
 
 export async function deleteSupplier(supplierId) {
@@ -238,4 +278,79 @@ export async function skuExists(sku, excludeItemId = null) {
   }
 
   return { exists: Boolean(data && data.length > 0), error: null }
+}
+
+export async function fetchItemSupplierMappings(itemId) {
+  return supabase
+    .from('item_supplier_map')
+    .select(
+      'id, item_id, supplier_id, supplier_sku, supplier_item_name, unit_price, currency, moq, lead_time_days, is_preferred, last_price_date, remarks, active, created_at, updated_at, suppliers(id, supplier_code, supplier_name, active)',
+    )
+    .eq('item_id', itemId)
+    .order('is_preferred', { ascending: false })
+    .order('created_at', { ascending: false })
+}
+
+export async function clearPreferredSupplierForItem(itemId, excludeMappingId = null) {
+  let query = supabase
+    .from('item_supplier_map')
+    .update({ is_preferred: false })
+    .eq('item_id', itemId)
+    .eq('is_preferred', true)
+
+  if (excludeMappingId) {
+    query = query.neq('id', excludeMappingId)
+  }
+
+  return query
+}
+
+export async function createItemSupplierMapping(payload) {
+  return supabase.from('item_supplier_map').insert(payload).select().single()
+}
+
+export async function updateItemSupplierMapping(mappingId, payload) {
+  return supabase
+    .from('item_supplier_map')
+    .update(payload)
+    .eq('id', mappingId)
+    .select()
+    .single()
+}
+
+export async function deleteItemSupplierMapping(mappingId) {
+  return supabase.from('item_supplier_map').delete().eq('id', mappingId)
+}
+
+export async function fetchPreferredSupplierSnapshots(itemIds = []) {
+  const normalizedItemIds = Array.from(
+    new Set(itemIds.map((itemId) => String(itemId || '').trim()).filter(Boolean)),
+  )
+
+  if (!normalizedItemIds.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 500
+  const allRows = []
+
+  for (let index = 0; index < normalizedItemIds.length; index += batchSize) {
+    const batch = normalizedItemIds.slice(index, index + batchSize)
+    const { data, error } = await supabase
+      .from('item_supplier_map')
+      .select(
+        'item_id, unit_price, currency, last_price_date, suppliers(id, supplier_code, supplier_name)',
+      )
+      .in('item_id', batch)
+      .eq('is_preferred', true)
+      .eq('active', true)
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    allRows.push(...(data || []))
+  }
+
+  return { data: allRows, error: null }
 }
