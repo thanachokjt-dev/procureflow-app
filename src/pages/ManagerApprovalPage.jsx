@@ -134,7 +134,7 @@ function ManagerApprovalPage() {
 
             <div className="mt-3">
               <label className="mb-1 block text-sm font-medium text-slate-700">
-                Manager Comment
+                Manager Comment (Required)
               </label>
               <textarea
                 rows={2}
@@ -146,7 +146,7 @@ function ManagerApprovalPage() {
                   }))
                 }
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
-                placeholder="Optional note for requester"
+                placeholder="Add reason for approval or rejection"
               />
             </div>
 
@@ -154,7 +154,7 @@ function ManagerApprovalPage() {
               <button
                 type="button"
                 onClick={() => handleDecision(item.id, REQUEST_STATUS.APPROVED)}
-                disabled={Boolean(isSaving[item.id])}
+                disabled={Boolean(isSaving[item.id]) || !decisionNotes[item.id]?.trim()}
                 className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 Approve
@@ -162,7 +162,7 @@ function ManagerApprovalPage() {
               <button
                 type="button"
                 onClick={() => handleDecision(item.id, REQUEST_STATUS.REJECTED)}
-                disabled={Boolean(isSaving[item.id])}
+                disabled={Boolean(isSaving[item.id]) || !decisionNotes[item.id]?.trim()}
                 className="rounded-md bg-rose-600 px-3 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 Reject
