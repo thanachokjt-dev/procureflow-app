@@ -31,6 +31,11 @@ const navItems = [
     pageKey: PAGE_KEYS.VARIANCE_CONFIRMATION,
   },
   {
+    to: '/final-approval-queue',
+    label: 'Final Approval Queue',
+    pageKey: PAGE_KEYS.FINAL_APPROVAL_QUEUE,
+  },
+  {
     to: '/procurement-queue',
     label: 'Procurement Queue',
     pageKey: PAGE_KEYS.PROCUREMENT_QUEUE,

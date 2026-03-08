@@ -3,9 +3,10 @@ import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
+import { fetchFinalApprovalQueue } from '../lib/po/poService'
 import { fetchVisiblePrRecords } from '../lib/pr/prService'
 import { ROLE_LABELS, ROLES } from '../lib/roles'
-import { PR_STATUSES } from '../lib/workflow/constants'
+import { PO_STATUSES, PR_STATUSES } from '../lib/workflow/constants'
 import { getPrStatusLabel, normalizePrStatus } from '../lib/workflow/statusHelpers'
 
 function getPrEstimatedTotal(prRecord) {
@@ -24,6 +25,7 @@ function getPrEstimatedTotal(prRecord) {
 function DashboardPage() {
   const { profile, role } = useAuth()
   const [prRecords, setPrRecords] = useState([])
+  const [pendingFinalApprovalRecords, setPendingFinalApprovalRecords] = useState([])
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
 
@@ -33,21 +35,40 @@ function DashboardPage() {
     const loadDashboard = async () => {
       setLoading(true)
       setErrorMessage('')
-
-      const { data, error } = await fetchVisiblePrRecords({ limit: 300, order: 'desc' })
+      const shouldLoadFinalApprovalRecords =
+        role === ROLES.MD_ASSISTANT || role === ROLES.ADMIN
+      const [prResult, finalApprovalResult] = await Promise.all([
+        fetchVisiblePrRecords({ limit: 300, order: 'desc' }),
+        shouldLoadFinalApprovalRecords
+          ? fetchFinalApprovalQueue({
+              status: PO_STATUSES.PENDING_FINAL_APPROVAL,
+              limit: 300,
+              order: 'desc',
+            })
+          : Promise.resolve({ data: [], error: null }),
+      ])
 
       if (!isMounted) {
         return
       }
 
-      if (error) {
-        setErrorMessage(error.message)
+      if (prResult.error) {
+        setErrorMessage(prResult.error.message)
         setPrRecords([])
+        setPendingFinalApprovalRecords([])
         setLoading(false)
         return
       }
 
-      setPrRecords(data || [])
+      if (finalApprovalResult.error) {
+        setErrorMessage(
+          finalApprovalResult.error.message ||
+            'Dashboard loaded with partial data. Final approval summary is unavailable.',
+        )
+      }
+
+      setPrRecords(prResult.data || [])
+      setPendingFinalApprovalRecords(finalApprovalResult.data || [])
       setLoading(false)
     }
 
@@ -56,7 +77,7 @@ function DashboardPage() {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [role])
 
   const summary = useMemo(() => {
     const now = new Date()
@@ -83,16 +104,19 @@ function DashboardPage() {
     const summaryCards = [
       { label: 'Visible Requests', value: prRecords.length, hint: 'Based on your role' },
       {
-        label:
-          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+        label: role === ROLES.MD_ASSISTANT || role === ROLES.ADMIN
+          ? 'Pending Final Approval POs'
+          : role === ROLES.PROCUREMENT || role === ROLES.ADMIN
             ? 'Ready For Procurement'
             : 'Submitted PRs',
-        value:
-          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+        value: role === ROLES.MD_ASSISTANT || role === ROLES.ADMIN
+          ? pendingFinalApprovalRecords.length
+          : role === ROLES.PROCUREMENT || role === ROLES.ADMIN
             ? approvedCount
             : submittedCount,
-        hint:
-          role === ROLES.PROCUREMENT || role === ROLES.ADMIN
+        hint: role === ROLES.MD_ASSISTANT || role === ROLES.ADMIN
+          ? 'Matches Final Approval Queue scope'
+          : role === ROLES.PROCUREMENT || role === ROLES.ADMIN
             ? 'Matches Procurement Queue scope'
             : 'Waiting for decision',
       },
@@ -101,7 +125,7 @@ function DashboardPage() {
     ]
 
     return summaryCards
-  }, [prRecords, role])
+  }, [pendingFinalApprovalRecords.length, prRecords, role])
 
   const spendByDepartment = useMemo(() => {
     const departmentMap = new Map()

@@ -45,6 +45,22 @@ export async function fetchActiveSuppliers() {
     .order('supplier_name', { ascending: true })
 }
 
+export async function fetchSupplierById(supplierId) {
+  const normalizedSupplierId = String(supplierId || '').trim()
+
+  if (!normalizedSupplierId) {
+    return { data: null, error: null }
+  }
+
+  return supabase
+    .from('suppliers')
+    .select(
+      'id, supplier_code, supplier_name, contact_name, email, phone, address, tax_id, payment_terms, lead_time_days, currency, notes, active, created_at, updated_at',
+    )
+    .eq('id', normalizedSupplierId)
+    .maybeSingle()
+}
+
 export async function createSupplier(payload) {
   return supabase.from('suppliers').insert(payload).select().single()
 }

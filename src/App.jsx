@@ -6,6 +6,8 @@ import { useAuth } from './context/AuthContext'
 import { PAGE_KEYS, PAGE_ROLE_ACCESS } from './lib/roles'
 import CreatePrPage from './pages/CreatePrPage'
 import DashboardPage from './pages/DashboardPage'
+import FinalApprovalQueuePage from './pages/FinalApprovalQueuePage'
+import FinalApprovalReviewPage from './pages/FinalApprovalReviewPage'
 import ItemMasterPage from './pages/ItemMasterPage'
 import LoginPage from './pages/LoginPage'
 import ManagerApprovalPage from './pages/ManagerApprovalPage'
@@ -63,6 +65,22 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.VARIANCE_CONFIRMATION]}>
                 <VarianceConfirmationPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/final-approval-queue"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.FINAL_APPROVAL_QUEUE]}>
+                <FinalApprovalQueuePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/final-approval-review/:poId"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.FINAL_APPROVAL_QUEUE]}>
+                <FinalApprovalReviewPage />
               </ProtectedRoute>
             }
           />

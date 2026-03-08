@@ -20,8 +20,8 @@ import { comparePrAndPoLines } from '../lib/workflow/varianceHelpers'
 const STATUS_OPTIONS = [
   { value: PO_STATUSES.PENDING_VARIANCE_CONFIRMATION, label: 'Pending Variance Confirmation' },
   { value: PO_STATUSES.PENDING_FINAL_APPROVAL, label: 'Pending Final Approval' },
-  { value: PO_STATUSES.DRAFT, label: 'Draft' },
-  { value: PO_STATUSES.CANCELLED, label: 'Cancelled' },
+  { value: PO_STATUSES.DRAFT, label: 'Sent Back / Draft' },
+  { value: PO_STATUSES.CANCELLED, label: 'Rejected / Cancelled' },
   { value: 'all', label: 'All Statuses' },
 ]
 
@@ -40,6 +40,18 @@ function getPoEstimatedTotal(poRecord) {
 
 function normalizeText(value) {
   return String(value || '').trim().toLowerCase()
+}
+
+function getVarianceReasonsText(poRecord) {
+  const reasons = Array.isArray(poRecord?.variance_reasons)
+    ? poRecord.variance_reasons
+    : []
+
+  if (!reasons.length) {
+    return ''
+  }
+
+  return reasons.join(' ')
 }
 
 function VarianceConfirmationPage() {
@@ -82,7 +94,8 @@ function VarianceConfirmationPage() {
         normalizeText(row.requester_name).includes(normalizedSearch) ||
         normalizeText(row.department).includes(normalizedSearch) ||
         normalizeText(row.purpose).includes(normalizedSearch) ||
-        normalizeText(row.source_pr?.pr_number).includes(normalizedSearch)
+        normalizeText(row.source_pr?.pr_number).includes(normalizedSearch) ||
+        normalizeText(getVarianceReasonsText(row)).includes(normalizedSearch)
 
       const matchesDepartment =
         departmentFilter === 'all' || String(row.department || '') === departmentFilter
@@ -329,6 +342,7 @@ function VarianceConfirmationPage() {
               <th className="px-3 py-2.5 font-medium">Department</th>
               <th className="px-3 py-2.5 font-medium">Purpose / Title</th>
               <th className="px-3 py-2.5 font-medium">Estimated Total</th>
+              <th className="px-3 py-2.5 font-medium">Variance Reasons</th>
               <th className="px-3 py-2.5 font-medium">Status</th>
               <th className="px-3 py-2.5 font-medium">Action</th>
             </tr>
@@ -336,7 +350,7 @@ function VarianceConfirmationPage() {
           <tbody className="bg-white">
             {loadingQueue ? (
               <tr>
-                <td className="px-3 py-3 text-slate-500" colSpan={8}>
+                <td className="px-3 py-3 text-slate-500" colSpan={9}>
                   Loading variance queue...
                 </td>
               </tr>
@@ -344,7 +358,7 @@ function VarianceConfirmationPage() {
 
             {!loadingQueue && filteredQueueRows.length === 0 ? (
               <tr>
-                <td className="px-3 py-3 text-slate-500" colSpan={8}>
+                <td className="px-3 py-3 text-slate-500" colSpan={9}>
                   No PO records found for current filters.
                 </td>
               </tr>
@@ -367,6 +381,22 @@ function VarianceConfirmationPage() {
                       <td className="px-3 py-3 text-slate-600">{row.department || '-'}</td>
                       <td className="px-3 py-3 text-slate-700">{row.purpose || '-'}</td>
                       <td className="px-3 py-3 text-slate-700">{formatCurrency(getPoEstimatedTotal(row))}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex max-w-64 flex-wrap gap-1">
+                          {(row.variance_reasons || []).length === 0 ? (
+                            <span className="text-xs text-slate-500">-</span>
+                          ) : (
+                            (row.variance_reasons || []).map((reason) => (
+                              <span
+                                key={`${row.id}-${reason}`}
+                                className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
+                              >
+                                {getVarianceReasonLabel(reason)}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </td>
                       <td className="px-3 py-3">
                         <StatusBadge status={row.status} text={getPoStatusLabel(row.status)} />
                       </td>

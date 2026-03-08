@@ -2,6 +2,7 @@ import { fetchPreferredSupplierMappings } from '../masterData'
 import { fetchPrDetailWithLines, updatePrDraftHeader } from '../pr/prService'
 import { supabase } from '../supabaseClient'
 import {
+  APP_ROLES,
   APPROVAL_ACTIONS,
   DOCUMENT_TYPES,
   PO_STATUSES,
@@ -10,6 +11,7 @@ import {
   WORKFLOW_ACTIONS,
 } from '../workflow/constants'
 import { createWorkflowHistoryEntry } from '../workflow/historyService'
+import { hasAnyRole, normalizeRole } from '../workflow/roleHelpers'
 import { normalizePrStatus } from '../workflow/statusHelpers'
 import {
   PO_DEFAULT_STATUS,
@@ -471,6 +473,40 @@ function mapVarianceDecisionToTransition(decision) {
       action: APPROVAL_ACTIONS.SEND_BACK,
       toStatus: PO_STATUSES.DRAFT,
       varianceStatus: 'sent_back',
+    }
+  }
+
+  return null
+}
+
+function normalizeFinalApprovalDecision(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+}
+
+function mapFinalApprovalDecisionToTransition(decision) {
+  if (decision === 'approve') {
+    return {
+      action: WORKFLOW_ACTIONS.FINAL_APPROVE_PO,
+      toStatus: PO_STATUSES.APPROVED_FOR_PAYMENT,
+      finalDecision: 'approved',
+    }
+  }
+
+  if (decision === 'reject') {
+    return {
+      action: APPROVAL_ACTIONS.REJECT,
+      toStatus: PO_STATUSES.CANCELLED,
+      finalDecision: 'rejected',
+    }
+  }
+
+  if (decision === 'send_back') {
+    return {
+      action: APPROVAL_ACTIONS.SEND_BACK,
+      toStatus: PO_STATUSES.DRAFT,
+      finalDecision: 'sent_back',
     }
   }
 
@@ -1033,6 +1069,82 @@ export async function fetchVarianceConfirmationQueue({
   }
 }
 
+export async function fetchFinalApprovalQueue({
+  status = PO_STATUSES.PENDING_FINAL_APPROVAL,
+  department = '',
+  searchTerm = '',
+  limit = 500,
+  order = 'asc',
+} = {}) {
+  const normalizedStatus = normalizeText(status)
+  const normalizedDepartment = normalizeText(department)
+  const normalizedSearch = normalizeText(searchTerm)
+  const normalizedLimit = normalizePositiveInteger(limit, 500)
+  const ascending = normalizeSortOrder(order, 'asc') === 'asc'
+
+  const runQuery = async (headerSelectClause) => {
+    let query = supabase
+      .from(PO_TABLES.HEADERS)
+      .select(
+        `
+        ${headerSelectClause},
+        po_lines (
+          id,
+          line_total,
+          ordered_qty,
+          unit_price
+        ),
+        source_pr:source_pr_id (
+          id,
+          pr_number,
+          status
+        )
+        `,
+      )
+      .order('created_at', { ascending })
+      .limit(normalizedLimit)
+
+    if (normalizedStatus && normalizedStatus !== 'all') {
+      query = query.eq('status', normalizedStatus)
+    }
+
+    if (normalizedDepartment && normalizedDepartment !== 'all') {
+      query = query.eq('department', normalizedDepartment)
+    }
+
+    if (normalizedSearch) {
+      query = query.or(
+        [
+          `po_number.ilike.%${normalizedSearch}%`,
+          `department.ilike.%${normalizedSearch}%`,
+          `requester_name.ilike.%${normalizedSearch}%`,
+          `purpose.ilike.%${normalizedSearch}%`,
+          `supplier_name_snapshot.ilike.%${normalizedSearch}%`,
+        ].join(','),
+      )
+    }
+
+    return query
+  }
+
+  let { data, error } = await runQuery(PO_HEADER_SELECT)
+
+  if (error && hasMissingPoHeaderVarianceColumnsError(error)) {
+    const fallbackResult = await runQuery(PO_HEADER_SELECT_LEGACY)
+    data = fallbackResult.data
+    error = fallbackResult.error
+  }
+
+  if (error) {
+    return { data: [], error }
+  }
+
+  return {
+    data: (data || []).map((row) => withPoDraftCompatibility(row)),
+    error: null,
+  }
+}
+
 export async function fetchPoVarianceReviewDetail(poId) {
   const { data: poDraft, error: poError } = await fetchPoDraftDetail(poId)
 
@@ -1352,6 +1464,7 @@ export async function applyPoVarianceDecision({
   const normalizedPoId = normalizeText(poId)
   const normalizedComment = normalizeText(comment)
   const normalizedDecision = normalizeVarianceDecision(decision)
+  const normalizedActorRole = normalizeRole(actorRole)
 
   if (!normalizedPoId) {
     return { data: null, error: new Error('PO ID is required.') }
@@ -1359,6 +1472,13 @@ export async function applyPoVarianceDecision({
 
   if (!normalizedComment) {
     return { data: null, error: new Error('Comment is required for variance decision.') }
+  }
+
+  if (!hasAnyRole(normalizedActorRole, [APP_ROLES.MANAGER, APP_ROLES.ADMIN])) {
+    return {
+      data: null,
+      error: new Error('Only manager or admin can confirm, reject, or send back variance items.'),
+    }
   }
 
   const transition = mapVarianceDecisionToTransition(normalizedDecision)
@@ -1393,7 +1513,7 @@ export async function applyPoVarianceDecision({
       from_status: currentPo.status,
       to_status: transition.toStatus,
       reviewer_user_id: actorUserId || null,
-      reviewer_role: normalizeText(actorRole) || null,
+      reviewer_role: normalizedActorRole || null,
       comment: normalizedComment,
       reviewed_at: reviewedAt,
     },
@@ -1423,10 +1543,114 @@ export async function applyPoVarianceDecision({
       documentId: updatedPo.id,
       action: transition.action,
       actorUserId,
-      actorRole,
+      actorRole: normalizedActorRole || actorRole,
       comment: normalizedComment,
       metadata: {
         decision: normalizedDecision,
+        from_status: currentPo.status,
+        to_status: transition.toStatus,
+        variance_reasons: currentPo.variance_reasons || [],
+      },
+    })
+  }
+
+  return { data: updatedPo, error: null }
+}
+
+export async function fetchPoFinalApprovalReviewDetail(poId) {
+  return fetchPoVarianceReviewDetail(poId)
+}
+
+export async function applyPoFinalApprovalDecision({
+  poId,
+  decision,
+  comment,
+  actorUserId,
+  actorRole,
+}) {
+  const normalizedPoId = normalizeText(poId)
+  const normalizedComment = normalizeText(comment)
+  const normalizedDecision = normalizeFinalApprovalDecision(decision)
+  const normalizedActorRole = normalizeRole(actorRole)
+
+  if (!normalizedPoId) {
+    return { data: null, error: new Error('PO ID is required.') }
+  }
+
+  if (!normalizedComment) {
+    return { data: null, error: new Error('Comment is required for final approval action.') }
+  }
+
+  if (!hasAnyRole(normalizedActorRole, [APP_ROLES.MD_ASSISTANT, APP_ROLES.ADMIN])) {
+    return {
+      data: null,
+      error: new Error(
+        'Only MD Assistant or Admin can approve, reject, or send back final approval items.',
+      ),
+    }
+  }
+
+  const transition = mapFinalApprovalDecisionToTransition(normalizedDecision)
+  if (!transition) {
+    return {
+      data: null,
+      error: new Error('Decision must be one of: approve, reject, send_back.'),
+    }
+  }
+
+  const { data: currentPo, error: currentPoError } = await fetchPoDraftDetail(normalizedPoId)
+
+  if (currentPoError || !currentPo?.id) {
+    return { data: null, error: currentPoError || new Error('PO draft not found.') }
+  }
+
+  if (currentPo.status !== PO_STATUSES.PENDING_FINAL_APPROVAL) {
+    return {
+      data: null,
+      error: new Error(
+        `Final decision is only allowed when PO status is ${PO_STATUSES.PENDING_FINAL_APPROVAL}.`,
+      ),
+    }
+  }
+
+  const reviewedAt = new Date().toISOString()
+  const currentVarianceSummary = normalizeJsonObject(currentPo.variance_summary) || {}
+  const nextVarianceSummary = {
+    ...currentVarianceSummary,
+    final_review: {
+      decision: normalizedDecision,
+      final_decision_status: transition.finalDecision,
+      from_status: currentPo.status,
+      to_status: transition.toStatus,
+      reviewer_user_id: actorUserId || null,
+      reviewer_role: normalizedActorRole || null,
+      comment: normalizedComment,
+      reviewed_at: reviewedAt,
+    },
+  }
+
+  const { data: updatedPo, error: updateError } = await savePoDraft(normalizedPoId, {
+    headerUpdates: {
+      status: transition.toStatus,
+      variance_summary: nextVarianceSummary,
+    },
+  })
+
+  if (updateError || !updatedPo?.id) {
+    return { data: null, error: updateError || new Error('Failed to apply final approval action.') }
+  }
+
+  if (actorUserId) {
+    await createWorkflowHistoryEntry({
+      documentType: DOCUMENT_TYPES.PO,
+      documentId: updatedPo.id,
+      action: transition.action,
+      actorUserId,
+      actorRole: normalizedActorRole || actorRole,
+      comment: normalizedComment,
+      metadata: {
+        decision: normalizedDecision,
+        final_decision_status: transition.finalDecision,
         from_status: currentPo.status,
         to_status: transition.toStatus,
         variance_reasons: currentPo.variance_reasons || [],
