@@ -53,6 +53,10 @@ export function getPageLayoutMode({ pathname = '/', role = '' } = {}) {
     return PAGE_LAYOUT_BY_PATH[pathname]
   }
 
+  if (pathname.startsWith('/create-pr/') || pathname.startsWith('/new-request/')) {
+    return PAGE_LAYOUT_MODES.FORM_FOCUSED
+  }
+
   const normalizedRole = normalizeRole(role)
   return ROLE_LAYOUT_HINTS[normalizedRole] || PAGE_LAYOUT_MODES.DEFAULT
 }

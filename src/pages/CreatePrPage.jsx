@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import { PrLinesCardEditor, PrLinesTableEditor } from '../components/pr/PrLinesEditors'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
 import { fetchActiveItems } from '../lib/masterData'
 import { PR_STATUSES, WORKFLOW_ACTIONS } from '../lib/workflow/constants'
+import { normalizePrStatus } from '../lib/workflow/statusHelpers'
 import {
   appendPrWorkflowHistory,
   createPrDraft,
+  fetchPrDetailWithLines,
   deletePrLine,
   savePrLines,
   updatePrDraftHeader,
@@ -27,6 +30,17 @@ const createLineDraft = () => ({
   remarks: '',
 })
 
+function getLocalDatePlusDaysIso(daysToAdd = 0) {
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() + Number(daysToAdd || 0))
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function toNumber(value, fallback = 0) {
   const numericValue = Number(value)
   if (Number.isNaN(numericValue)) {
@@ -42,8 +56,26 @@ function getLineEstimatedTotal(line) {
   return qty * unitPrice
 }
 
+function mapSavedLineToFormLine(line) {
+  return {
+    local_id: `line-${line.id || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    db_id: line.id || null,
+    item_id: line.item_id || '',
+    itemSearch: '',
+    sku: line.sku || '',
+    item_name: line.item_name || '',
+    description: line.description || '',
+    unit: line.unit || '',
+    requested_qty: String(line.requested_qty || ''),
+    estimated_unit_price: String(line.estimated_unit_price ?? ''),
+    remarks: line.remarks || '',
+  }
+}
+
 function CreatePrPage() {
   const { profile, user, role } = useAuth()
+  const navigate = useNavigate()
+  const { prId } = useParams()
 
   const [formValues, setFormValues] = useState({
     department: profile?.department || '',
@@ -63,7 +95,10 @@ function CreatePrPage() {
   const [lastSavedDraft, setLastSavedDraft] = useState(null)
   const [activeDraftId, setActiveDraftId] = useState('')
   const [activeDraftNumber, setActiveDraftNumber] = useState('')
+  const [activeDraftStatus, setActiveDraftStatus] = useState(PR_STATUSES.DRAFT)
   const [pendingDeleteLineIds, setPendingDeleteLineIds] = useState([])
+  const minNeededByDate = useMemo(() => getLocalDatePlusDaysIso(7), [])
+  const [isLoadingDraft, setIsLoadingDraft] = useState(false)
 
   useEffect(() => {
     const loadItems = async () => {
@@ -89,6 +124,11 @@ function CreatePrPage() {
   const documentEstimatedTotal = useMemo(() => {
     return lineItems.reduce((total, line) => total + getLineEstimatedTotal(line), 0)
   }, [lineItems])
+  const isReadOnlyMode = Boolean(prId) && normalizePrStatus(activeDraftStatus) !== PR_STATUSES.DRAFT
+  const pageTitle = prId ? (isReadOnlyMode ? 'PR Details' : 'Edit PR Draft') : 'Create PR'
+  const pageSubtitle = prId
+    ? 'Open an existing PR record. Drafts are editable, submitted PRs are read-only.'
+    : 'Create a purchase request draft, then submit it for manager approval.'
 
   const handleHeaderChange = (fieldName) => (event) => {
     const value = event.target.value
@@ -170,6 +210,13 @@ function CreatePrPage() {
   }
 
   const resetForm = () => {
+    if (prId) {
+      setSaveError('')
+      setSaveSuccess('')
+      setValidationErrors([])
+      return
+    }
+
     setFormValues({
       department: profile?.department || '',
       purpose: '',
@@ -183,6 +230,7 @@ function CreatePrPage() {
     setLastSavedDraft(null)
     setActiveDraftId('')
     setActiveDraftNumber('')
+    setActiveDraftStatus(PR_STATUSES.DRAFT)
     setPendingDeleteLineIds([])
   }
 
@@ -195,6 +243,12 @@ function CreatePrPage() {
 
     if (!String(formValues.purpose || '').trim()) {
       errors.push('Purpose is required.')
+    }
+
+    if (String(formValues.needed_by_date || '').trim()) {
+      if (formValues.needed_by_date < minNeededByDate) {
+        errors.push(`Needed by date must be ${minNeededByDate} or later (today + 7 days).`)
+      }
     }
 
     if (!Array.isArray(lineItems) || lineItems.length === 0) {
@@ -235,24 +289,57 @@ function CreatePrPage() {
     await persistPr({ submitAfterSave: false })
   }
 
-  const mapSavedLineToFormLine = (line) => ({
-    local_id: `line-${line.id || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    db_id: line.id || null,
-    item_id: line.item_id || '',
-    itemSearch: '',
-    sku: line.sku || '',
-    item_name: line.item_name || '',
-    description: line.description || '',
-    unit: line.unit || '',
-    requested_qty: String(line.requested_qty || ''),
-    estimated_unit_price: String(line.estimated_unit_price ?? ''),
-    remarks: line.remarks || '',
-  })
+  useEffect(() => {
+    if (!prId) {
+      return
+    }
+
+    const loadDraftForEdit = async () => {
+      setIsLoadingDraft(true)
+      setSaveError('')
+      setSaveSuccess('')
+      setValidationErrors([])
+
+      const { data, error } = await fetchPrDetailWithLines(prId)
+
+      if (error || !data?.id) {
+        setSaveError(error?.message || 'Unable to load PR for editing.')
+        setIsLoadingDraft(false)
+        return
+      }
+
+      const normalizedStatus = normalizePrStatus(data.status || PR_STATUSES.DRAFT)
+      const loadedLines =
+        Array.isArray(data.pr_lines) && data.pr_lines.length > 0
+          ? data.pr_lines.map(mapSavedLineToFormLine)
+          : [createLineDraft()]
+
+      setFormValues({
+        department: data.department || '',
+        purpose: data.purpose || '',
+        needed_by_date: data.needed_by_date || '',
+        notes: data.notes || '',
+      })
+      setLineItems(loadedLines)
+      setActiveDraftId(data.id)
+      setActiveDraftNumber(data.pr_number || '')
+      setActiveDraftStatus(normalizedStatus)
+      setPendingDeleteLineIds([])
+      setIsLoadingDraft(false)
+    }
+
+    loadDraftForEdit()
+  }, [prId])
 
   const persistPr = async ({ submitAfterSave = false }) => {
     setSaveError('')
     setSaveSuccess('')
     setLastSavedDraft(null)
+
+    if (isReadOnlyMode) {
+      setSaveError('This PR is already submitted and is no longer editable.')
+      return
+    }
 
     const errors = validateForm()
     setValidationErrors(errors)
@@ -389,8 +476,18 @@ function CreatePrPage() {
       setPendingDeleteLineIds([])
       setActiveDraftId('')
       setActiveDraftNumber('')
+      setActiveDraftStatus(PR_STATUSES.DRAFT)
       setIsSaving(false)
       setIsSubmittingPr(false)
+
+      navigate('/requests', {
+        state: {
+          flashMessage: historyError
+            ? `PR submitted (${submittedHeader.pr_number}), but history log failed.`
+            : `PR submitted: ${submittedHeader.pr_number}`,
+        },
+        replace: false,
+      })
       return
     }
 
@@ -401,11 +498,19 @@ function CreatePrPage() {
     })
     setActiveDraftId(draftHeader.id)
     setActiveDraftNumber(draftHeader.pr_number || '')
+    setActiveDraftStatus(PR_STATUSES.DRAFT)
     setLineItems((savedLines || []).map(mapSavedLineToFormLine))
     setPendingDeleteLineIds([])
     setValidationErrors([])
     setIsSaving(false)
     setIsSubmittingPr(false)
+
+    navigate('/requests', {
+      state: {
+        flashMessage: `Draft saved: ${draftHeader.pr_number}`,
+      },
+      replace: false,
+    })
   }
 
   const handleSubmitPr = async (event) => {
@@ -422,9 +527,21 @@ function CreatePrPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Create PR"
-        subtitle="Create a purchase request draft, then submit it for manager approval."
+        title={pageTitle}
+        subtitle={pageSubtitle}
       />
+
+      {isLoadingDraft ? (
+        <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          Loading PR draft...
+        </div>
+      ) : null}
+
+      {isReadOnlyMode ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-700">
+          This PR is submitted and shown in read-only mode.
+        </div>
+      ) : null}
 
       {itemsError ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
@@ -475,6 +592,7 @@ function CreatePrPage() {
                 onChange={handleHeaderChange('department')}
                 placeholder="Operations"
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                disabled={isReadOnlyMode || isLoadingDraft}
                 required
               />
             </div>
@@ -485,8 +603,13 @@ function CreatePrPage() {
                 type="date"
                 value={formValues.needed_by_date}
                 onChange={handleHeaderChange('needed_by_date')}
+                min={minNeededByDate}
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                disabled={isReadOnlyMode || isLoadingDraft}
               />
+              <p className="mt-1 text-xs text-slate-500">
+                Earliest allowed date: {minNeededByDate} (today + 7 days)
+              </p>
             </div>
 
             <div className="md:col-span-2">
@@ -499,6 +622,7 @@ function CreatePrPage() {
                 onChange={handleHeaderChange('purpose')}
                 placeholder="Describe why this purchase request is needed."
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                disabled={isReadOnlyMode || isLoadingDraft}
                 required
               />
             </div>
@@ -513,6 +637,7 @@ function CreatePrPage() {
                 onChange={handleHeaderChange('notes')}
                 placeholder="Optional internal notes."
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                disabled={isReadOnlyMode || isLoadingDraft}
               />
             </div>
           </div>
@@ -523,6 +648,7 @@ function CreatePrPage() {
               <button
                 type="button"
                 onClick={handleAddLine}
+                disabled={isReadOnlyMode || isLoadingDraft}
                 className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
               >
                 + Add Line
@@ -538,6 +664,7 @@ function CreatePrPage() {
               onSelectCatalogItem={handleSelectCatalogItem}
               onRemoveLine={handleRemoveLine}
               getLineEstimatedTotal={getLineEstimatedTotal}
+              readOnly={isReadOnlyMode || isLoadingDraft}
             />
 
             <PrLinesCardEditor
@@ -549,6 +676,7 @@ function CreatePrPage() {
               onSelectCatalogItem={handleSelectCatalogItem}
               onRemoveLine={handleRemoveLine}
               getLineEstimatedTotal={getLineEstimatedTotal}
+              readOnly={isReadOnlyMode || isLoadingDraft}
             />
           </div>
 
@@ -560,7 +688,7 @@ function CreatePrPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
-              disabled={isSaving || isSubmittingPr}
+              disabled={isSaving || isSubmittingPr || isReadOnlyMode || isLoadingDraft}
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {isSaving ? 'Saving Draft...' : 'Save Draft'}
@@ -568,7 +696,7 @@ function CreatePrPage() {
             <button
               type="button"
               onClick={handleSubmitPr}
-              disabled={isSaving || isSubmittingPr}
+              disabled={isSaving || isSubmittingPr || isReadOnlyMode || isLoadingDraft}
               className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {isSubmittingPr ? 'Submitting PR...' : 'Submit PR'}
@@ -580,6 +708,15 @@ function CreatePrPage() {
             >
               Reset
             </button>
+            {isReadOnlyMode ? (
+              <button
+                type="button"
+                onClick={() => navigate('/requests')}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Back to Requests
+              </button>
+            ) : null}
           </div>
         </form>
 

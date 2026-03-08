@@ -165,8 +165,7 @@ to authenticated
 with check (
   public.current_user_role() = 'admin'
   or (
-    public.current_user_role() in ('staff', 'requester')
-    and requester_user_id = auth.uid()
+    requester_user_id = auth.uid()
     and status = 'draft'
   )
 );
@@ -177,13 +176,11 @@ on public.pr_headers
 for update
 to authenticated
 using (
-  public.current_user_role() in ('staff', 'requester')
-  and requester_user_id = auth.uid()
+  requester_user_id = auth.uid()
   and status = 'draft'
 )
 with check (
-  public.current_user_role() in ('staff', 'requester')
-  and requester_user_id = auth.uid()
+  requester_user_id = auth.uid()
   and status in ('draft', 'submitted')
 );
 
@@ -217,8 +214,7 @@ to authenticated
 using (
   public.current_user_role() = 'admin'
   or (
-    public.current_user_role() in ('staff', 'requester')
-    and requester_user_id = auth.uid()
+    requester_user_id = auth.uid()
     and status = 'draft'
   )
 );
@@ -257,8 +253,7 @@ with check (
       and (
         public.current_user_role() = 'admin'
         or (
-          public.current_user_role() in ('staff', 'requester')
-          and pr.requester_user_id = auth.uid()
+          pr.requester_user_id = auth.uid()
           and pr.status = 'draft'
         )
       )
@@ -278,8 +273,7 @@ using (
       and (
         public.current_user_role() = 'admin'
         or (
-          public.current_user_role() in ('staff', 'requester')
-          and pr.requester_user_id = auth.uid()
+          pr.requester_user_id = auth.uid()
           and pr.status = 'draft'
         )
       )
@@ -293,8 +287,7 @@ with check (
       and (
         public.current_user_role() = 'admin'
         or (
-          public.current_user_role() in ('staff', 'requester')
-          and pr.requester_user_id = auth.uid()
+          pr.requester_user_id = auth.uid()
           and pr.status = 'draft'
         )
       )
@@ -314,8 +307,7 @@ using (
       and (
         public.current_user_role() = 'admin'
         or (
-          public.current_user_role() in ('staff', 'requester')
-          and pr.requester_user_id = auth.uid()
+          pr.requester_user_id = auth.uid()
           and pr.status = 'draft'
         )
       )

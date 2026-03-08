@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient'
-import { DOCUMENT_TYPES, PR_STATUS_LIST } from '../workflow/constants'
+import { DOCUMENT_TYPES, PR_STATUSES, PR_STATUS_LIST, WORKFLOW_ACTIONS } from '../workflow/constants'
 import { createWorkflowHistoryEntry } from '../workflow/historyService'
 import { normalizePrStatus } from '../workflow/statusHelpers'
 import {
@@ -93,7 +93,20 @@ export async function createPrDraft({
     .select(PR_HEADER_SELECT)
     .single()
 
-  return { data, error }
+  if (error) {
+    return { data: null, error }
+  }
+
+  if (!data?.pr_number) {
+    return {
+      data,
+      error: new Error(
+        'PR number was not generated. Run the PR numbering SQL patch and try again.',
+      ),
+    }
+  }
+
+  return { data, error: null }
 }
 
 export async function updatePrDraftHeader(prId, updates = {}) {
@@ -178,6 +191,64 @@ export async function fetchPrList({
 
   const { data, error } = await query
   return { data: data || [], error }
+}
+
+export async function fetchPrListWithLineSummary({
+  status = '',
+  searchTerm = '',
+  limit = 200,
+  order = 'desc',
+} = {}) {
+  const normalizedStatus = normalizeStatusForSave(status, '')
+  const normalizedSearch = normalizeText(searchTerm)
+  const normalizedLimit = Number(limit)
+  const ascending = order === 'asc'
+
+  let query = supabase
+    .from(PR_TABLES.HEADERS)
+    .select(
+      `
+      ${PR_HEADER_SELECT},
+      pr_lines (
+        id,
+        requested_qty,
+        estimated_unit_price,
+        estimated_total
+      )
+    `,
+    )
+    .order('created_at', { ascending })
+    .limit(Number.isInteger(normalizedLimit) && normalizedLimit > 0 ? normalizedLimit : 200)
+
+  if (normalizedStatus) {
+    query = query.eq('status', normalizedStatus)
+  }
+
+  if (normalizedSearch) {
+    query = query.or(
+      [
+        `pr_number.ilike.%${normalizedSearch}%`,
+        `requester_name.ilike.%${normalizedSearch}%`,
+        `department.ilike.%${normalizedSearch}%`,
+        `purpose.ilike.%${normalizedSearch}%`,
+      ].join(','),
+    )
+  }
+
+  const { data, error } = await query
+  return { data: data || [], error }
+}
+
+export async function fetchVisiblePrRecords({ limit = 300, order = 'desc' } = {}) {
+  return fetchPrListWithLineSummary({ limit, order })
+}
+
+export async function fetchPendingPrApprovals({ limit = 300, order = 'asc' } = {}) {
+  return fetchPrListWithLineSummary({
+    status: PR_STATUSES.SUBMITTED,
+    limit,
+    order,
+  })
 }
 
 export async function fetchPrDetailWithLines(prId) {
@@ -293,4 +364,52 @@ export async function appendPrWorkflowHistory({
     comment,
     metadata,
   })
+}
+
+export async function setPrDecision({
+  prId,
+  status,
+  managerComment = '',
+  actorUserId,
+  actorRole,
+}) {
+  const normalizedStatus = normalizePrStatus(status)
+
+  if (![PR_STATUSES.APPROVED, PR_STATUSES.REJECTED].includes(normalizedStatus)) {
+    return { data: null, error: new Error('Status must be approved or rejected.') }
+  }
+
+  const comment = String(managerComment || '').trim()
+  if (!comment) {
+    return {
+      data: null,
+      error: new Error('Manager comment is required when approving or rejecting.'),
+    }
+  }
+
+  const { data: updatedHeader, error: updateError } = await updatePrDraftHeader(prId, {
+    status: normalizedStatus,
+  })
+
+  if (updateError || !updatedHeader?.id) {
+    return { data: null, error: updateError || new Error('Failed to update PR status.') }
+  }
+
+  if (actorUserId) {
+    const action =
+      normalizedStatus === PR_STATUSES.APPROVED
+        ? WORKFLOW_ACTIONS.APPROVE_PR
+        : WORKFLOW_ACTIONS.REJECT_PR
+
+    await appendPrWorkflowHistory({
+      prId: updatedHeader.id,
+      action,
+      actorUserId,
+      actorRole,
+      comment,
+      metadata: { decision_status: normalizedStatus },
+    })
+  }
+
+  return { data: updatedHeader, error: null }
 }

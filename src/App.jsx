@@ -37,6 +37,14 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/create-pr/:prId"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST]}>
+                <CreatePrPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/create-pr" element={<Navigate to="/new-request" replace />} />
           <Route path="/requests" element={<RequestsPage />} />
           <Route

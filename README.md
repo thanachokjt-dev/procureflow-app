@@ -28,6 +28,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Manager/Admin can import Supplier and Item CSV files with preview and upsert
 - New Request supports multiple line items
 - New Request uses Supplier Master + Item Master selections
+- Active PR flow uses `pr_headers` + `pr_lines` (legacy request flow is not routed in UI)
 
 ## Tech Stack
 - React (Vite)
@@ -69,6 +70,8 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/workflow_history_phase3b.sql`
    - `supabase/pr_phase4a.sql`
    - `supabase/pr_phase4b_submit_policy.sql`
+   - `supabase/pr_phase4_patch_rls.sql`
+   - `supabase/pr_phase4c_pr_number_fix.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -84,6 +87,8 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 5. If your project is already running previous phases, you can run only:
    - `supabase/pr_phase4a.sql`
    - `supabase/pr_phase4b_submit_policy.sql`
+   - `supabase/pr_phase4_patch_rls.sql`
+   - `supabase/pr_phase4c_pr_number_fix.sql`
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -210,4 +215,6 @@ supabase/
   workflow_history_phase3b.sql
   pr_phase4a.sql
   pr_phase4b_submit_policy.sql
+  pr_phase4_patch_rls.sql
+  pr_phase4c_pr_number_fix.sql
 ```

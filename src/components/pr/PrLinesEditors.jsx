@@ -38,6 +38,7 @@ export function PrLinesTableEditor({
   onSelectCatalogItem,
   onRemoveLine,
   getLineEstimatedTotal,
+  readOnly = false,
 }) {
   return (
     <div className="hidden lg:block">
@@ -93,14 +94,14 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'itemSearch', event.target.value)
                       }
                       placeholder="SKU / name / brand"
-                      disabled={itemsLoading || catalogItems.length === 0}
+                      disabled={readOnly || itemsLoading || catalogItems.length === 0}
                     />
                   </td>
                   <td className="px-2 py-2">
                     <SelectField
                       value={line.item_id}
                       onChange={(event) => onSelectCatalogItem(line.local_id, event.target.value)}
-                      disabled={itemsLoading || catalogItems.length === 0}
+                      disabled={readOnly || itemsLoading || catalogItems.length === 0}
                     >
                       {itemsLoading ? <option value="">Loading items...</option> : null}
                       {!itemsLoading && catalogItems.length === 0 ? (
@@ -121,6 +122,7 @@ export function PrLinesTableEditor({
                       value={line.sku}
                       onChange={(event) => onFieldChange(line.local_id, 'sku', event.target.value)}
                       placeholder="SKU"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -130,6 +132,7 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'item_name', event.target.value)
                       }
                       placeholder="Item name"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -140,6 +143,7 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'description', event.target.value)
                       }
                       placeholder="Description"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -147,6 +151,7 @@ export function PrLinesTableEditor({
                       value={line.unit}
                       onChange={(event) => onFieldChange(line.local_id, 'unit', event.target.value)}
                       placeholder="pcs"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -159,6 +164,7 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'requested_qty', event.target.value)
                       }
                       placeholder="0"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -171,6 +177,7 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'estimated_unit_price', event.target.value)
                       }
                       placeholder="0.00"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -186,10 +193,11 @@ export function PrLinesTableEditor({
                         onFieldChange(line.local_id, 'remarks', event.target.value)
                       }
                       placeholder="Optional note"
+                      disabled={readOnly}
                     />
                   </td>
                   <td className="px-2 py-2">
-                    {lineItems.length > 1 ? (
+                    {!readOnly && lineItems.length > 1 ? (
                       <button
                         type="button"
                         onClick={() => onRemoveLine(line.local_id)}
@@ -221,6 +229,7 @@ export function PrLinesCardEditor({
   onSelectCatalogItem,
   onRemoveLine,
   getLineEstimatedTotal,
+  readOnly = false,
 }) {
   return (
     <div className="space-y-3 lg:hidden">
@@ -233,7 +242,7 @@ export function PrLinesCardEditor({
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
                 Line {index + 1}
               </p>
-              {lineItems.length > 1 ? (
+              {!readOnly && lineItems.length > 1 ? (
                 <button
                   type="button"
                   onClick={() => onRemoveLine(line.local_id)}
@@ -249,13 +258,13 @@ export function PrLinesCardEditor({
                 value={line.itemSearch}
                 onChange={(event) => onFieldChange(line.local_id, 'itemSearch', event.target.value)}
                 placeholder="Search item (SKU/name/brand/model)"
-                disabled={itemsLoading || catalogItems.length === 0}
+                disabled={readOnly || itemsLoading || catalogItems.length === 0}
               />
 
               <SelectField
                 value={line.item_id}
                 onChange={(event) => onSelectCatalogItem(line.local_id, event.target.value)}
-                disabled={itemsLoading || catalogItems.length === 0}
+                disabled={readOnly || itemsLoading || catalogItems.length === 0}
               >
                 {itemsLoading ? <option value="">Loading items...</option> : null}
                 {!itemsLoading && catalogItems.length === 0 ? (
@@ -275,12 +284,14 @@ export function PrLinesCardEditor({
                 value={line.sku}
                 onChange={(event) => onFieldChange(line.local_id, 'sku', event.target.value)}
                 placeholder="SKU"
+                disabled={readOnly}
               />
 
               <InputField
                 value={line.item_name}
                 onChange={(event) => onFieldChange(line.local_id, 'item_name', event.target.value)}
                 placeholder="Item name"
+                disabled={readOnly}
               />
 
               <TextareaField
@@ -289,12 +300,14 @@ export function PrLinesCardEditor({
                 onChange={(event) => onFieldChange(line.local_id, 'description', event.target.value)}
                 placeholder="Description"
                 className="md:col-span-2"
+                disabled={readOnly}
               />
 
               <InputField
                 value={line.unit}
                 onChange={(event) => onFieldChange(line.local_id, 'unit', event.target.value)}
                 placeholder="Unit"
+                disabled={readOnly}
               />
 
               <InputField
@@ -304,6 +317,7 @@ export function PrLinesCardEditor({
                 value={line.requested_qty}
                 onChange={(event) => onFieldChange(line.local_id, 'requested_qty', event.target.value)}
                 placeholder="Requested qty"
+                disabled={readOnly}
               />
 
               <InputField
@@ -315,6 +329,7 @@ export function PrLinesCardEditor({
                   onFieldChange(line.local_id, 'estimated_unit_price', event.target.value)
                 }
                 placeholder="Estimated unit price (optional)"
+                disabled={readOnly}
               />
 
               <div className="flex items-center rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">
@@ -327,6 +342,7 @@ export function PrLinesCardEditor({
                 onChange={(event) => onFieldChange(line.local_id, 'remarks', event.target.value)}
                 placeholder="Remarks (optional)"
                 className="md:col-span-2"
+                disabled={readOnly}
               />
             </div>
           </div>
