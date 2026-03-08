@@ -1,6 +1,10 @@
 import { supabase } from '../supabaseClient'
-import { APPROVAL_ACTION_LIST, DOCUMENT_TYPE_LIST } from './constants'
+import { APPROVAL_ACTION_LIST, DOCUMENT_TYPE_LIST, WORKFLOW_ACTION_LIST } from './constants'
 import { normalizeRole } from './roleHelpers'
+
+const WORKFLOW_HISTORY_ACTIONS = Array.from(
+  new Set([...APPROVAL_ACTION_LIST, ...WORKFLOW_ACTION_LIST]),
+)
 
 function toReadableLabel(value) {
   return String(value || '')
@@ -19,7 +23,7 @@ export function isValidDocumentType(documentType) {
 }
 
 export function isValidWorkflowAction(action) {
-  return APPROVAL_ACTION_LIST.includes(String(action || '').toLowerCase())
+  return WORKFLOW_HISTORY_ACTIONS.includes(String(action || '').toLowerCase())
 }
 
 export function sortWorkflowHistoryEntries(entries = [], order = 'desc') {
@@ -60,7 +64,7 @@ export async function createWorkflowHistoryEntry({
   if (!isValidWorkflowAction(normalizedAction)) {
     return {
       data: null,
-      error: new Error(`Invalid action. Use one of: ${APPROVAL_ACTION_LIST.join(', ')}`),
+      error: new Error(`Invalid action. Use one of: ${WORKFLOW_HISTORY_ACTIONS.join(', ')}`),
     }
   }
 

@@ -8,6 +8,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Centralized workflow constants (roles, PR/PO statuses, actions, document types)
 - Reusable PR vs PO variance comparison helpers for future conversion flow
 - Transition + role/action guard helpers for consistent workflow validation
+- Phase 4A PR foundation (`pr_headers`, `pr_lines`, PR numbering, PR services)
 
 ## Features
 - Sign in / sign out with session persistence
@@ -20,6 +21,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Reusable workflow history timeline (`pr` / `po`) for internal tracking
 - Internal variance debug surface for Procurement/Admin
 - Internal guard checker for action permissions and status transitions
+- Internal PR foundation debug panel (PR number preview + draft creation test)
 - Manager/Admin can manage Supplier Master and Item Master
 - Item Master supports image upload to Supabase Storage (with manual `image_url` fallback)
 - Manager/Admin can manage Item-Supplier Mapping (one preferred supplier per item)
@@ -65,6 +67,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/master_data_phase1.sql`
    - `supabase/master_data_phase2.sql`
    - `supabase/workflow_history_phase3b.sql`
+   - `supabase/pr_phase4a.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -73,7 +76,12 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `items`
    - `item_supplier_map`
    - `workflow_history`
+   - `pr_number_counters`
+   - `pr_headers`
+   - `pr_lines`
    - RLS policies for `staff`/`manager`/`admin` (legacy schema)
+5. If your project is already running previous phases, you can run only:
+   - `supabase/pr_phase4a.sql`
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -167,6 +175,10 @@ src/
     procurementData.js
     roles.js
     supabaseClient.js
+    pr/
+      prConstants.js
+      prNumbering.js
+      prService.js
     workflow/
       constants.js
       guardHelpers.js
@@ -193,4 +205,5 @@ supabase/
   master_data_phase1.sql
   master_data_phase2.sql
   workflow_history_phase3b.sql
+  pr_phase4a.sql
 ```

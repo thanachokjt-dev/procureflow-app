@@ -4,11 +4,11 @@ import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
 import { useAuth } from './context/AuthContext'
 import { PAGE_KEYS, PAGE_ROLE_ACCESS } from './lib/roles'
+import CreatePrPage from './pages/CreatePrPage'
 import DashboardPage from './pages/DashboardPage'
 import ItemMasterPage from './pages/ItemMasterPage'
 import LoginPage from './pages/LoginPage'
 import ManagerApprovalPage from './pages/ManagerApprovalPage'
-import NewRequestPage from './pages/NewRequestPage'
 import RequestsPage from './pages/RequestsPage'
 import SupplierMasterPage from './pages/SupplierMasterPage'
 import WorkflowDebugPage from './pages/WorkflowDebugPage'
@@ -30,13 +30,14 @@ function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route
-            path="/new-request"
+            path="/create-pr"
             element={
               <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST]}>
-                <NewRequestPage />
+                <CreatePrPage />
               </ProtectedRoute>
             }
           />
+          <Route path="/new-request" element={<Navigate to="/create-pr" replace />} />
           <Route path="/requests" element={<RequestsPage />} />
           <Route
             path="/manager-approval"

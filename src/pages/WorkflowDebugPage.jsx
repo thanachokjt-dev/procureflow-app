@@ -3,7 +3,6 @@ import PageHeader from '../components/PageHeader'
 import WorkflowTimeline from '../components/WorkflowTimeline'
 import { useAuth } from '../context/AuthContext'
 import {
-  APPROVAL_ACTIONS,
   APPROVAL_ACTION_LIST,
   APP_ROLE_LIST,
   DOCUMENT_TYPES,
@@ -37,6 +36,8 @@ import {
   checkWorkflowActionPermission,
   checkWorkflowGuard,
 } from '../lib/workflow/guardHelpers'
+import { createPrNumberPreview } from '../lib/pr/prNumbering'
+import { createPrDraft } from '../lib/pr/prService'
 
 const samplePrLines = [
   {
@@ -78,6 +79,10 @@ const samplePoDraftLines = [
   },
 ]
 
+const HISTORY_ACTION_OPTIONS = Array.from(
+  new Set([...APPROVAL_ACTION_LIST, ...WORKFLOW_ACTION_LIST]),
+)
+
 function TransitionList({ title, transitionMap, getLabel }) {
   const entries = Object.entries(transitionMap)
 
@@ -101,11 +106,11 @@ function TransitionList({ title, transitionMap, getLabel }) {
 }
 
 function WorkflowDebugPage() {
-  const { user, role } = useAuth()
+  const { user, profile, role } = useAuth()
   const [documentType, setDocumentType] = useState(DOCUMENT_TYPES.PR)
   const [documentId, setDocumentId] = useState('')
   const [historyOrder, setHistoryOrder] = useState('desc')
-  const [historyAction, setHistoryAction] = useState(APPROVAL_ACTIONS.SUBMIT)
+  const [historyAction, setHistoryAction] = useState(WORKFLOW_ACTIONS.CREATE_PR)
   const [historyComment, setHistoryComment] = useState('')
   const [metadataText, setMetadataText] = useState('{\n  "source": "workflow_debug_page"\n}')
   const [historyEntries, setHistoryEntries] = useState([])
@@ -130,6 +135,11 @@ function WorkflowDebugPage() {
   const [guardFromStatus, setGuardFromStatus] = useState(PR_STATUSES.DRAFT)
   const [guardToStatus, setGuardToStatus] = useState(PR_STATUSES.SUBMITTED)
   const [guardResult, setGuardResult] = useState(null)
+  const [prNumberYear, setPrNumberYear] = useState(String(new Date().getFullYear()))
+  const [prNumberSequence, setPrNumberSequence] = useState('1')
+  const [prDraftLoading, setPrDraftLoading] = useState(false)
+  const [prDraftError, setPrDraftError] = useState('')
+  const [prDraftResult, setPrDraftResult] = useState(null)
 
   const handleFetchHistory = async () => {
     setHistoryError('')
@@ -276,6 +286,38 @@ function WorkflowDebugPage() {
     setGuardResult(result)
   }
 
+  const prNumberPreview = createPrNumberPreview({
+    year: Number(prNumberYear),
+    sequence: Number(prNumberSequence),
+  })
+
+  const handleCreatePrDraft = async () => {
+    setPrDraftError('')
+    setPrDraftResult(null)
+
+    if (!user?.id) {
+      setPrDraftError('You must be signed in to create a PR draft.')
+      return
+    }
+
+    setPrDraftLoading(true)
+
+    const { data, error } = await createPrDraft({
+      requesterName: profile?.full_name || user.email || 'Requester',
+      department: profile?.department || '',
+      notes: 'Created from Workflow Debug',
+    })
+
+    if (error) {
+      setPrDraftError(error.message)
+      setPrDraftLoading(false)
+      return
+    }
+
+    setPrDraftResult(data)
+    setPrDraftLoading(false)
+  }
+
   const sampleGuardChecks = [
     {
       label: 'Requester trying to approve PR',
@@ -378,6 +420,90 @@ function WorkflowDebugPage() {
           transitionMap={PO_STATUS_TRANSITIONS}
           getLabel={getPoStatusLabel}
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+        <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            PR Number Preview
+          </h3>
+
+          <div className="grid gap-2 md:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Year
+              </label>
+              <input
+                type="number"
+                min="2000"
+                max="9999"
+                value={prNumberYear}
+                onChange={(event) => setPrNumberYear(event.target.value)}
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                Sequence
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={prNumberSequence}
+                onChange={(event) => setPrNumberSequence(event.target.value)}
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-md border border-slate-200 bg-white p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Preview</p>
+            <p className="mt-1 text-base font-semibold text-slate-800">{prNumberPreview}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            PR Draft Service Test
+          </h3>
+
+          <p className="text-sm text-slate-600">
+            Creates an empty PR draft in <code>pr_headers</code> with default status{' '}
+            <code>draft</code>. This follows RLS, so <code>requester</code>/<code>staff</code> or{' '}
+            <code>admin</code> can create.
+          </p>
+
+          {prDraftError ? (
+            <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+              {prDraftError}
+            </div>
+          ) : null}
+
+          {prDraftResult ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+              Draft created: {prDraftResult.pr_number} ({prDraftResult.id})
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={handleCreatePrDraft}
+            disabled={prDraftLoading}
+            className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {prDraftLoading ? 'Creating Draft...' : 'Create Empty PR Draft'}
+          </button>
+
+          <details>
+            <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-slate-500">
+              Last Draft Result JSON
+            </summary>
+            <pre className="mt-2 overflow-x-auto rounded-md bg-slate-900 p-3 text-xs text-slate-100">
+              {JSON.stringify(prDraftResult, null, 2)}
+            </pre>
+          </details>
+        </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
@@ -590,7 +716,7 @@ function WorkflowDebugPage() {
                 onChange={(event) => setHistoryAction(event.target.value)}
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
               >
-                {APPROVAL_ACTION_LIST.map((action) => (
+                {HISTORY_ACTION_OPTIONS.map((action) => (
                   <option key={action} value={action}>
                     {action}
                   </option>

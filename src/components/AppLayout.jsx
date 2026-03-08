@@ -10,8 +10,8 @@ const navItems = [
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.DASHBOARD],
   },
   {
-    to: '/new-request',
-    label: 'New Request',
+    to: '/create-pr',
+    label: 'Create PR',
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST],
   },
   {
