@@ -21,6 +21,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Internal variance debug surface for Procurement/Admin
 - Internal guard checker for action permissions and status transitions
 - Manager/Admin can manage Supplier Master and Item Master
+- Item Master supports image upload to Supabase Storage (with manual `image_url` fallback)
 - Manager/Admin can manage Item-Supplier Mapping (one preferred supplier per item)
 - Manager/Admin can import Supplier and Item CSV files with preview and upsert
 - New Request supports multiple line items
@@ -52,6 +53,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    ```env
    VITE_SUPABASE_URL=https://your-project-ref.supabase.co
    VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+   VITE_SUPABASE_ITEM_IMAGE_BUCKET=item-images
    ```
 
 ## 3) Apply Database Schema + RLS
@@ -107,6 +109,15 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    npm run lint
    ```
 
+## 6.1) Storage Bucket for Item Images
+1. Open Supabase Dashboard > `Storage`
+2. Create a bucket named `item-images` (or use your own bucket name)
+3. Mark it as public so uploaded image URLs can be displayed in the app
+4. If you use a different bucket name, set:
+   ```env
+   VITE_SUPABASE_ITEM_IMAGE_BUCKET=your-bucket-name
+   ```
+
 ## 7) Master Data + CSV Import (Manager/Admin)
 - Supplier Master import:
   - Key: `supplier_code`
@@ -151,6 +162,7 @@ src/
     AuthContext.jsx
   lib/
     formatters.js
+    itemImageStorage.js
     masterData.js
     procurementData.js
     roles.js
