@@ -14,6 +14,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Manager can view pending requests and approve/reject
 - Admin can access everything
 - Manager/Admin can manage Supplier Master and Item Master
+- Manager/Admin can import Supplier and Item CSV files with preview and upsert
 - New Request supports multiple line items
 - New Request uses Supplier Master + Item Master selections
 
@@ -91,6 +92,20 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    ```bash
    npm run lint
    ```
+
+## 7) Phase 2 CSV Import (Manager/Admin)
+- Supplier Master import:
+  - Upsert key: `supplier_code`
+  - Required columns: `supplier_code`, `supplier_name`
+- Item Master import:
+  - Upsert key: `sku`
+  - Required columns: `sku`, `item_name`, `unit`
+- Steps:
+  1. Open `Supplier Master` or `Item Master`
+  2. Click `Download Template`
+  3. Fill the CSV with your data
+  4. Upload the file and review preview/invalid rows
+  5. Click import to upsert valid rows only
 
 ## Environment Files
 - `.env.example` is a template

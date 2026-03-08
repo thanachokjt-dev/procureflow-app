@@ -49,6 +49,31 @@ export async function createSupplier(payload) {
   return supabase.from('suppliers').insert(payload).select().single()
 }
 
+export async function upsertSuppliers(rows = []) {
+  if (!rows.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 200
+  const allData = []
+
+  for (let index = 0; index < rows.length; index += batchSize) {
+    const batch = rows.slice(index, index + batchSize)
+    const { data, error } = await supabase
+      .from('suppliers')
+      .upsert(batch, { onConflict: 'supplier_code' })
+      .select('id')
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    allData.push(...(data || []))
+  }
+
+  return { data: allData, error: null }
+}
+
 export async function updateSupplier(supplierId, payload) {
   return supabase.from('suppliers').update(payload).eq('id', supplierId).select().single()
 }
@@ -123,6 +148,31 @@ export async function fetchActiveItems() {
 
 export async function createItem(payload) {
   return supabase.from('items').insert(payload).select().single()
+}
+
+export async function upsertItems(rows = []) {
+  if (!rows.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 200
+  const allData = []
+
+  for (let index = 0; index < rows.length; index += batchSize) {
+    const batch = rows.slice(index, index + batchSize)
+    const { data, error } = await supabase
+      .from('items')
+      .upsert(batch, { onConflict: 'sku' })
+      .select('id')
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    allData.push(...(data || []))
+  }
+
+  return { data: allData, error: null }
 }
 
 export async function updateItem(itemId, payload) {

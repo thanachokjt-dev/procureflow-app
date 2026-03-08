@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import { useAuth } from '../context/AuthContext'
+import {
+  downloadCsvTemplate,
+  getMissingRequiredColumns,
+  parseCsvBoolean,
+  parseCsvFile,
+} from '../lib/csvImport'
 import {
   createSupplier,
   deleteSupplier,
   fetchSuppliers,
   supplierCodeExists,
   updateSupplier,
+  upsertSuppliers,
 } from '../lib/masterData'
+import { hasRoleAccess, ROLES } from '../lib/roles'
 
 const initialSupplierForm = {
   supplier_code: '',
@@ -21,7 +30,83 @@ const initialSupplierForm = {
   active: true,
 }
 
+const supplierTemplateColumns = [
+  'supplier_code',
+  'supplier_name',
+  'contact_name',
+  'email',
+  'phone',
+  'payment_terms',
+  'lead_time_days',
+  'currency',
+  'notes',
+  'active',
+]
+
+const supplierRequiredColumns = ['supplier_code', 'supplier_name']
+
+function buildSupplierPayloadFromCsv(values) {
+  const errors = []
+
+  const supplierCode = String(values.supplier_code || '').trim()
+  const supplierName = String(values.supplier_name || '').trim()
+  const contactName = String(values.contact_name || '').trim()
+  const email = String(values.email || '').trim()
+  const phone = String(values.phone || '').trim()
+  const paymentTerms = String(values.payment_terms || '').trim()
+  const leadTimeRaw = String(values.lead_time_days || '').trim()
+  const currency = String(values.currency || '').trim().toUpperCase()
+  const notes = String(values.notes || '').trim()
+
+  if (!supplierCode) {
+    errors.push('supplier_code is required.')
+  }
+
+  if (!supplierName) {
+    errors.push('supplier_name is required.')
+  }
+
+  if (email && !email.includes('@')) {
+    errors.push('email format is invalid.')
+  }
+
+  let leadTimeDays = null
+  if (leadTimeRaw) {
+    const parsedLeadTime = Number(leadTimeRaw)
+
+    if (Number.isNaN(parsedLeadTime) || parsedLeadTime < 0) {
+      errors.push('lead_time_days must be zero or greater.')
+    } else {
+      leadTimeDays = Math.floor(parsedLeadTime)
+    }
+  }
+
+  const activeResult = parseCsvBoolean(values.active, true)
+  if (activeResult.error) {
+    errors.push(activeResult.error)
+  }
+
+  return {
+    errors,
+    payload: {
+      supplier_code: supplierCode,
+      supplier_name: supplierName,
+      contact_name: contactName || null,
+      email: email || null,
+      phone: phone || null,
+      payment_terms: paymentTerms || null,
+      lead_time_days: leadTimeDays,
+      currency: currency || 'USD',
+      notes: notes || null,
+      active: activeResult.value,
+    },
+  }
+}
+
 function SupplierMasterPage() {
+  const { role } = useAuth()
+  const canImport = hasRoleAccess(role, [ROLES.MANAGER, ROLES.ADMIN])
+
   const [suppliers, setSuppliers] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [activeFilter, setActiveFilter] = useState('all')
@@ -31,6 +116,8 @@ function SupplierMasterPage() {
   const [formValues, setFormValues] = useState(initialSupplierForm)
   const [editingSupplierId, setEditingSupplierId] = useState(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [importPreview, setImportPreview] = useState(null)
+  const [isImporting, setIsImporting] = useState(false)
 
   const loadSuppliers = async () => {
     setLoading(true)
@@ -175,6 +262,107 @@ function SupplierMasterPage() {
     await loadSuppliers()
   }
 
+  const handleCsvTemplateDownload = () => {
+    downloadCsvTemplate('supplier_import_template.csv', supplierTemplateColumns, [
+      {
+        supplier_code: 'SUP-001',
+        supplier_name: 'Acme Supplies Co.',
+        contact_name: 'Jane Buyer',
+        email: 'jane@acme.example',
+        phone: '+1-555-0100',
+        payment_terms: 'Net 30',
+        lead_time_days: '14',
+        currency: 'USD',
+        notes: 'Preferred office supplier',
+        active: 'true',
+      },
+    ])
+  }
+
+  const handleCsvFileChange = async (event) => {
+    const selectedFile = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!selectedFile) {
+      return
+    }
+
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    const { headers, normalizedHeaders, records, parseError } = await parseCsvFile(selectedFile)
+
+    if (parseError) {
+      setImportPreview(null)
+      setErrorMessage(parseError)
+      return
+    }
+
+    const missingColumns = getMissingRequiredColumns(normalizedHeaders, supplierRequiredColumns)
+
+    if (missingColumns.length > 0) {
+      setImportPreview(null)
+      setErrorMessage(`Missing required columns: ${missingColumns.join(', ')}`)
+      return
+    }
+
+    if (!records.length) {
+      setImportPreview(null)
+      setErrorMessage('CSV file has no data rows.')
+      return
+    }
+
+    const validRows = []
+    const invalidRows = []
+
+    records.forEach((record) => {
+      const { errors, payload } = buildSupplierPayloadFromCsv(record.values)
+
+      if (errors.length > 0) {
+        invalidRows.push({
+          rowNumber: record.rowNumber,
+          errors,
+        })
+        return
+      }
+
+      validRows.push(payload)
+    })
+
+    setImportPreview({
+      fileName: selectedFile.name,
+      headers,
+      validRows,
+      invalidRows,
+      totalRows: records.length,
+    })
+  }
+
+  const handleImportSuppliers = async () => {
+    if (!importPreview || importPreview.validRows.length === 0) {
+      setErrorMessage('No valid supplier rows to import.')
+      return
+    }
+
+    setIsImporting(true)
+    setErrorMessage('')
+    setSuccessMessage('')
+
+    const { error } = await upsertSuppliers(importPreview.validRows)
+
+    if (error) {
+      setErrorMessage(`Supplier import failed: ${error.message}`)
+      setIsImporting(false)
+      return
+    }
+
+    setSuccessMessage(
+      `Supplier import complete. Upserted ${importPreview.validRows.length} row(s) and skipped ${importPreview.invalidRows.length} invalid row(s).`,
+    )
+    setIsImporting(false)
+    await loadSuppliers()
+  }
+
   const handleEdit = (supplier) => {
     setEditingSupplierId(supplier.id)
     setFormValues({
@@ -259,6 +447,116 @@ function SupplierMasterPage() {
 
       <div className="grid gap-6 lg:grid-cols-[1.7fr_1fr]">
         <section className="space-y-3">
+          {canImport ? (
+            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                    CSV Import
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Required columns: {supplierRequiredColumns.join(', ')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCsvTemplateDownload}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                >
+                  Download Template
+                </button>
+              </div>
+
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleCsvFileChange}
+                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-100"
+              />
+
+              {importPreview ? (
+                <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-slate-600">
+                      <span className="font-medium">File:</span> {importPreview.fileName}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setImportPreview(null)}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      Clear Preview
+                    </button>
+                  </div>
+
+                  <div className="grid gap-2 text-xs text-slate-600 md:grid-cols-3">
+                    <p>Total rows: {importPreview.totalRows}</p>
+                    <p className="text-emerald-700">Valid rows: {importPreview.validRows.length}</p>
+                    <p className="text-rose-700">Invalid rows: {importPreview.invalidRows.length}</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleImportSuppliers}
+                    disabled={isImporting || importPreview.validRows.length === 0}
+                    className="rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {isImporting
+                      ? 'Importing...'
+                      : `Import ${importPreview.validRows.length} Valid Row(s)`}
+                  </button>
+
+                  {importPreview.validRows.length > 0 ? (
+                    <div className="overflow-x-auto rounded-md border border-slate-200">
+                      <table className="min-w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                            <th className="px-2 py-2 font-medium">Code</th>
+                            <th className="px-2 py-2 font-medium">Supplier Name</th>
+                            <th className="px-2 py-2 font-medium">Currency</th>
+                            <th className="px-2 py-2 font-medium">Active</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importPreview.validRows.slice(0, 5).map((row, index) => (
+                            <tr key={`${row.supplier_code}-${index}`} className="border-b border-slate-100 last:border-0">
+                              <td className="px-2 py-2">{row.supplier_code}</td>
+                              <td className="px-2 py-2">{row.supplier_name}</td>
+                              <td className="px-2 py-2">{row.currency}</td>
+                              <td className="px-2 py-2">{row.active ? 'true' : 'false'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
+                  {importPreview.validRows.length > 5 ? (
+                    <p className="text-xs text-slate-500">
+                      Showing first 5 valid rows in preview.
+                    </p>
+                  ) : null}
+
+                  {importPreview.invalidRows.length > 0 ? (
+                    <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
+                      <p className="font-medium">Invalid rows (not imported):</p>
+                      <ul className="mt-2 list-disc space-y-1 pl-5">
+                        {importPreview.invalidRows.slice(0, 10).map((row) => (
+                          <li key={`invalid-supplier-row-${row.rowNumber}`}>
+                            Row {row.rowNumber}: {row.errors.join(' ')}
+                          </li>
+                        ))}
+                      </ul>
+                      {importPreview.invalidRows.length > 10 ? (
+                        <p className="mt-2">Showing first 10 invalid rows.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-slate-200 bg-white p-3">
               <p className="text-xs uppercase tracking-wide text-slate-500">Total Suppliers</p>
