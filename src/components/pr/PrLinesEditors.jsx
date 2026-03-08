@@ -1,4 +1,10 @@
+import { useState } from 'react'
 import { formatCurrency } from '../../lib/formatters'
+import {
+  PR_UNIT_BASE_OPTIONS,
+  PR_UNIT_CUSTOM_LABEL,
+  PR_UNIT_CUSTOM_OPTION,
+} from '../../lib/pr/prFormOptions'
 
 function InputField({ className = '', ...props }) {
   return (
@@ -29,6 +35,61 @@ function SelectField({ className = '', children, ...props }) {
   )
 }
 
+function ThumbnailCell({ imageUrl, itemName, onOpenPreview }) {
+  if (!imageUrl) {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-slate-200 bg-slate-100 text-[10px] text-slate-500">
+        No image
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenPreview}
+      className="h-12 w-12 overflow-hidden rounded-md border border-slate-200 bg-white"
+      title="Preview image"
+    >
+      <img
+        src={imageUrl}
+        alt={itemName || 'Item image'}
+        className="h-full w-full object-cover"
+      />
+    </button>
+  )
+}
+
+function ImagePreviewModal({ imageUrl, itemName, onClose }) {
+  if (!imageUrl) {
+    return null
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 p-4">
+      <div className="w-full max-w-2xl rounded-lg border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-700">{itemName || 'Item image preview'}</p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Close
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-auto rounded-md border border-slate-200 bg-slate-50 p-2">
+          <img
+            src={imageUrl}
+            alt={itemName || 'Item image'}
+            className="mx-auto max-h-[64vh] max-w-full rounded-md object-contain"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function PrLinesTableEditor({
   lineItems,
   itemsLoading,
@@ -36,18 +97,25 @@ export function PrLinesTableEditor({
   getFilteredItemsForLine,
   onFieldChange,
   onSelectCatalogItem,
+  onUnitOptionChange,
+  onCustomUnitChange,
   onRemoveLine,
   getLineEstimatedTotal,
   readOnly = false,
 }) {
+  const [previewImage, setPreviewImage] = useState(null)
+
   return (
     <div className="hidden lg:block">
       <div className="overflow-x-auto rounded-lg border border-slate-200">
-        <table className="min-w-[1560px] border-collapse text-left text-sm">
+        <table className="min-w-[1780px] border-collapse text-left text-sm">
           <thead>
             <tr className="bg-slate-50 text-slate-600">
               <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2.5 font-medium">
                 Search
+              </th>
+              <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2.5 font-medium">
+                Image
               </th>
               <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 px-3 py-2.5 font-medium">
                 Item Master
@@ -95,6 +163,18 @@ export function PrLinesTableEditor({
                       }
                       placeholder="SKU / name / brand"
                       disabled={readOnly || itemsLoading || catalogItems.length === 0}
+                    />
+                  </td>
+                  <td className="px-2 py-2">
+                    <ThumbnailCell
+                      imageUrl={line.item_image_url}
+                      itemName={line.item_name}
+                      onOpenPreview={() =>
+                        setPreviewImage({
+                          url: line.item_image_url,
+                          name: line.item_name,
+                        })
+                      }
                     />
                   </td>
                   <td className="px-2 py-2">
@@ -147,12 +227,34 @@ export function PrLinesTableEditor({
                     />
                   </td>
                   <td className="px-2 py-2">
-                    <InputField
-                      value={line.unit}
-                      onChange={(event) => onFieldChange(line.local_id, 'unit', event.target.value)}
-                      placeholder="pcs"
-                      disabled={readOnly}
-                    />
+                    <div className="space-y-2">
+                      <SelectField
+                        value={line.unit_option || ''}
+                        onChange={(event) =>
+                          onUnitOptionChange(line.local_id, event.target.value)
+                        }
+                        disabled={readOnly}
+                      >
+                        <option value="">Select unit</option>
+                        {PR_UNIT_BASE_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                        <option value={PR_UNIT_CUSTOM_OPTION}>{PR_UNIT_CUSTOM_LABEL}</option>
+                      </SelectField>
+
+                      {line.unit_option === PR_UNIT_CUSTOM_OPTION ? (
+                        <InputField
+                          value={line.custom_unit || ''}
+                          onChange={(event) =>
+                            onCustomUnitChange(line.local_id, event.target.value)
+                          }
+                          placeholder="Please specify unit"
+                          disabled={readOnly}
+                        />
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-2 py-2">
                     <InputField
@@ -216,6 +318,12 @@ export function PrLinesTableEditor({
           </tbody>
         </table>
       </div>
+
+      <ImagePreviewModal
+        imageUrl={previewImage?.url || ''}
+        itemName={previewImage?.name || ''}
+        onClose={() => setPreviewImage(null)}
+      />
     </div>
   )
 }
@@ -227,10 +335,14 @@ export function PrLinesCardEditor({
   getFilteredItemsForLine,
   onFieldChange,
   onSelectCatalogItem,
+  onUnitOptionChange,
+  onCustomUnitChange,
   onRemoveLine,
   getLineEstimatedTotal,
   readOnly = false,
 }) {
+  const [previewImage, setPreviewImage] = useState(null)
+
   return (
     <div className="space-y-3 lg:hidden">
       {lineItems.map((line, index) => {
@@ -254,6 +366,20 @@ export function PrLinesCardEditor({
             </div>
 
             <div className="grid gap-3 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <p className="mb-1 text-xs uppercase tracking-wide text-slate-500">Item Image</p>
+                <ThumbnailCell
+                  imageUrl={line.item_image_url}
+                  itemName={line.item_name}
+                  onOpenPreview={() =>
+                    setPreviewImage({
+                      url: line.item_image_url,
+                      name: line.item_name,
+                    })
+                  }
+                />
+              </div>
+
               <InputField
                 value={line.itemSearch}
                 onChange={(event) => onFieldChange(line.local_id, 'itemSearch', event.target.value)}
@@ -303,12 +429,30 @@ export function PrLinesCardEditor({
                 disabled={readOnly}
               />
 
-              <InputField
-                value={line.unit}
-                onChange={(event) => onFieldChange(line.local_id, 'unit', event.target.value)}
-                placeholder="Unit"
-                disabled={readOnly}
-              />
+              <div className="space-y-2">
+                <SelectField
+                  value={line.unit_option || ''}
+                  onChange={(event) => onUnitOptionChange(line.local_id, event.target.value)}
+                  disabled={readOnly}
+                >
+                  <option value="">Select unit</option>
+                  {PR_UNIT_BASE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                  <option value={PR_UNIT_CUSTOM_OPTION}>{PR_UNIT_CUSTOM_LABEL}</option>
+                </SelectField>
+
+                {line.unit_option === PR_UNIT_CUSTOM_OPTION ? (
+                  <InputField
+                    value={line.custom_unit || ''}
+                    onChange={(event) => onCustomUnitChange(line.local_id, event.target.value)}
+                    placeholder="Please specify unit"
+                    disabled={readOnly}
+                  />
+                ) : null}
+              </div>
 
               <InputField
                 type="number"
@@ -348,6 +492,12 @@ export function PrLinesCardEditor({
           </div>
         )
       })}
+
+      <ImagePreviewModal
+        imageUrl={previewImage?.url || ''}
+        itemName={previewImage?.name || ''}
+        onClose={() => setPreviewImage(null)}
+      />
     </div>
   )
 }

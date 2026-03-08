@@ -6,6 +6,13 @@ import { PrLinesCardEditor, PrLinesTableEditor } from '../components/pr/PrLinesE
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
 import { fetchActiveItems } from '../lib/masterData'
+import {
+  getEffectiveUnitValue,
+  mapUnitValueToFormState,
+  normalizeDepartmentForPr,
+  PR_DEPARTMENT_OPTIONS,
+  PR_UNIT_CUSTOM_OPTION,
+} from '../lib/pr/prFormOptions'
 import { hasAnyRole, ROLES } from '../lib/roles'
 import { APPROVAL_ACTIONS, DOCUMENT_TYPES, PR_STATUSES, WORKFLOW_ACTIONS } from '../lib/workflow/constants'
 import { fetchWorkflowHistoryEntries } from '../lib/workflow/historyService'
@@ -25,10 +32,13 @@ const createLineDraft = () => ({
   db_id: null,
   item_id: '',
   itemSearch: '',
+  item_image_url: '',
   sku: '',
   item_name: '',
   description: '',
   unit: '',
+  unit_option: '',
+  custom_unit: '',
   requested_qty: '1',
   estimated_unit_price: '',
   remarks: '',
@@ -60,16 +70,25 @@ function getLineEstimatedTotal(line) {
   return qty * unitPrice
 }
 
+function getDefaultDepartmentValue(profileDepartment) {
+  return normalizeDepartmentForPr(profileDepartment)
+}
+
 function mapSavedLineToFormLine(line) {
+  const unitState = mapUnitValueToFormState(line.unit)
+
   return {
     local_id: `line-${line.id || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     db_id: line.id || null,
     item_id: line.item_id || '',
     itemSearch: '',
+    item_image_url: '',
     sku: line.sku || '',
     item_name: line.item_name || '',
     description: line.description || '',
-    unit: line.unit || '',
+    unit: unitState.unit,
+    unit_option: unitState.unit_option,
+    custom_unit: unitState.custom_unit,
     requested_qty: String(line.requested_qty || ''),
     estimated_unit_price: String(line.estimated_unit_price ?? ''),
     remarks: line.remarks || '',
@@ -82,7 +101,7 @@ function CreatePrPage() {
   const { prId } = useParams()
 
   const [formValues, setFormValues] = useState({
-    department: profile?.department || '',
+    department: getDefaultDepartmentValue(profile?.department),
     purpose: '',
     needed_by_date: '',
     notes: '',
@@ -102,6 +121,7 @@ function CreatePrPage() {
   const [activeDraftStatus, setActiveDraftStatus] = useState(PR_STATUSES.DRAFT)
   const [activeRequesterName, setActiveRequesterName] = useState('')
   const [activeRequesterUserId, setActiveRequesterUserId] = useState('')
+  const [legacyDepartmentValue, setLegacyDepartmentValue] = useState('')
   const [pendingDeleteLineIds, setPendingDeleteLineIds] = useState([])
   const minNeededByDate = useMemo(() => getLocalDatePlusDaysIso(7), [])
   const [isLoadingDraft, setIsLoadingDraft] = useState(false)
@@ -112,6 +132,7 @@ function CreatePrPage() {
   const [workflowHistoryEntries, setWorkflowHistoryEntries] = useState([])
   const [workflowHistoryLoading, setWorkflowHistoryLoading] = useState(false)
   const [workflowHistoryError, setWorkflowHistoryError] = useState('')
+  const profileDefaultDepartment = getDefaultDepartmentValue(profile?.department)
 
   useEffect(() => {
     const loadItems = async () => {
@@ -127,7 +148,22 @@ function CreatePrPage() {
         return
       }
 
-      setCatalogItems(data || [])
+      const nextCatalogItems = data || []
+      const imageByItemId = nextCatalogItems.reduce((accumulator, item) => {
+        accumulator[item.id] = item.image_url || ''
+        return accumulator
+      }, {})
+
+      setCatalogItems(nextCatalogItems)
+      setLineItems((previous) =>
+        previous.map((line) => {
+          const itemId = String(line.item_id || '').trim()
+          return {
+            ...line,
+            item_image_url: itemId ? imageByItemId[itemId] || '' : '',
+          }
+        }),
+      )
       setItemsLoading(false)
     }
 
@@ -157,6 +193,9 @@ function CreatePrPage() {
       ? 'Review submitted PR details and take approval action with a required comment.'
       : 'Open an existing PR record. Owner drafts are editable and reviewed PRs are read-only.'
     : 'Create a purchase request draft, then submit it for manager approval.'
+  const displayedDepartmentValue = prId
+    ? formValues.department
+    : formValues.department || profileDefaultDepartment
 
   const handleHeaderChange = (fieldName) => (event) => {
     const value = event.target.value
@@ -200,18 +239,69 @@ function CreatePrPage() {
         }
 
         if (!selectedItem) {
-          return { ...line, item_id: '' }
+          return {
+            ...line,
+            item_id: '',
+            item_image_url: '',
+          }
         }
+
+        const nextUnitState = mapUnitValueToFormState(selectedItem.unit)
 
         return {
           ...line,
           item_id: selectedItem.id,
+          item_image_url: selectedItem.image_url || '',
           sku: selectedItem.sku || line.sku,
           item_name: selectedItem.item_name || line.item_name,
           description: selectedItem.description || selectedItem.spec_text || line.description,
-          unit: selectedItem.unit || line.unit,
+          unit: nextUnitState.unit || line.unit,
+          unit_option: nextUnitState.unit_option || line.unit_option,
+          custom_unit:
+            nextUnitState.unit_option === PR_UNIT_CUSTOM_OPTION
+              ? nextUnitState.custom_unit
+              : '',
         }
       }),
+    )
+  }
+
+  const handleUnitOptionChange = (lineId, unitOption) => {
+    setLineItems((previous) =>
+      previous.map((line) => {
+        if (line.local_id !== lineId) {
+          return line
+        }
+
+        if (unitOption === PR_UNIT_CUSTOM_OPTION) {
+          return {
+            ...line,
+            unit_option: PR_UNIT_CUSTOM_OPTION,
+            unit: line.custom_unit || '',
+          }
+        }
+
+        return {
+          ...line,
+          unit_option: unitOption,
+          custom_unit: '',
+          unit: unitOption,
+        }
+      }),
+    )
+  }
+
+  const handleCustomUnitChange = (lineId, customUnit) => {
+    setLineItems((previous) =>
+      previous.map((line) =>
+        line.local_id === lineId
+          ? {
+              ...line,
+              custom_unit: customUnit,
+              unit: customUnit,
+            }
+          : line,
+      ),
     )
   }
 
@@ -246,7 +336,7 @@ function CreatePrPage() {
     }
 
     setFormValues({
-      department: profile?.department || '',
+      department: getDefaultDepartmentValue(profile?.department),
       purpose: '',
       needed_by_date: '',
       notes: '',
@@ -261,6 +351,7 @@ function CreatePrPage() {
     setActiveDraftStatus(PR_STATUSES.DRAFT)
     setActiveRequesterName('')
     setActiveRequesterUserId('')
+    setLegacyDepartmentValue('')
     setPendingDeleteLineIds([])
     setWorkflowHistoryEntries([])
     setWorkflowHistoryError('')
@@ -270,7 +361,10 @@ function CreatePrPage() {
   const validateForm = () => {
     const errors = []
 
-    if (!String(formValues.department || '').trim()) {
+    const normalizedDepartment = normalizeDepartmentForPr(
+      formValues.department || (!prId ? profileDefaultDepartment : ''),
+    )
+    if (!normalizedDepartment) {
       errors.push('Department is required.')
     }
 
@@ -301,8 +395,13 @@ function CreatePrPage() {
         errors.push(`Line ${lineNumber}: Item name is required.`)
       }
 
-      if (!String(line.unit || '').trim()) {
+      const effectiveUnit = getEffectiveUnitValue(line)
+      if (!effectiveUnit) {
         errors.push(`Line ${lineNumber}: Unit is required.`)
+      }
+
+      if (line.unit_option === PR_UNIT_CUSTOM_OPTION && !String(line.custom_unit || '').trim()) {
+        errors.push(`Line ${lineNumber}: Please specify custom unit.`)
       }
 
       if (Number.isNaN(qty) || qty <= 0) {
@@ -347,17 +446,31 @@ function CreatePrPage() {
 
   const applyLoadedPrData = (data) => {
     const normalizedStatus = normalizePrStatus(data.status || PR_STATUSES.DRAFT)
+    const normalizedDepartment = normalizeDepartmentForPr(data.department)
+    const legacyDepartment =
+      !normalizedDepartment && String(data.department || '').trim()
+        ? String(data.department || '').trim()
+        : ''
     const loadedLines =
       Array.isArray(data.pr_lines) && data.pr_lines.length > 0
-        ? data.pr_lines.map(mapSavedLineToFormLine)
+        ? data.pr_lines.map((line) => {
+            const nextLine = mapSavedLineToFormLine(line)
+            const matchedItem = catalogItems.find((item) => item.id === nextLine.item_id)
+
+            return {
+              ...nextLine,
+              item_image_url: matchedItem?.image_url || '',
+            }
+          })
         : [createLineDraft()]
 
     setFormValues({
-      department: data.department || '',
+      department: normalizedDepartment,
       purpose: data.purpose || '',
       needed_by_date: data.needed_by_date || '',
       notes: data.notes || '',
     })
+    setLegacyDepartmentValue(legacyDepartment)
     setLineItems(loadedLines)
     setActiveDraftId(data.id)
     setActiveDraftNumber(data.pr_number || '')
@@ -400,6 +513,7 @@ function CreatePrPage() {
     }
 
     loadDraftForEdit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prId])
 
   const persistPr = async ({ submitAfterSave = false }) => {
@@ -419,6 +533,14 @@ function CreatePrPage() {
       return
     }
 
+    const normalizedDepartment = normalizeDepartmentForPr(
+      formValues.department || (!prId ? profileDefaultDepartment : ''),
+    )
+    if (normalizedDepartment && normalizedDepartment !== formValues.department) {
+      setFormValues((previous) => ({ ...previous, department: normalizedDepartment }))
+    }
+    setLegacyDepartmentValue('')
+
     if (submitAfterSave) {
       setIsSubmittingPr(true)
     } else {
@@ -429,7 +551,7 @@ function CreatePrPage() {
 
     if (activeDraftId) {
       const { data: updatedHeader, error: updateError } = await updatePrDraftHeader(activeDraftId, {
-        department: formValues.department,
+        department: normalizedDepartment,
         purpose: formValues.purpose,
         neededByDate: formValues.needed_by_date || null,
         notes: formValues.notes,
@@ -446,7 +568,7 @@ function CreatePrPage() {
       draftHeader = updatedHeader
     } else {
       const { data: createdHeader, error: createError } = await createPrDraft({
-        department: formValues.department,
+        department: normalizedDepartment,
         purpose: formValues.purpose,
         neededByDate: formValues.needed_by_date || null,
         notes: formValues.notes,
@@ -482,7 +604,7 @@ function CreatePrPage() {
       sku: String(line.sku || '').trim() || null,
       item_name: String(line.item_name || '').trim(),
       description: String(line.description || '').trim() || null,
-      unit: String(line.unit || '').trim(),
+      unit: getEffectiveUnitValue(line),
       requested_qty: Number(line.requested_qty),
       estimated_unit_price:
         String(line.estimated_unit_price || '').trim() === ''
@@ -539,11 +661,12 @@ function CreatePrPage() {
       setValidationErrors([])
       setLineItems([createLineDraft()])
       setFormValues({
-        department: profile?.department || '',
+        department: getDefaultDepartmentValue(profile?.department),
         purpose: '',
         needed_by_date: '',
         notes: '',
       })
+      setLegacyDepartmentValue('')
       setPendingDeleteLineIds([])
       setActiveDraftId('')
       setActiveDraftNumber('')
@@ -837,15 +960,26 @@ function CreatePrPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Department</label>
-              <input
-                type="text"
-                value={formValues.department}
+              <select
+                value={displayedDepartmentValue}
                 onChange={handleHeaderChange('department')}
-                placeholder="Operations"
                 className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
                 disabled={isReadOnlyMode || isLoadingDraft}
                 required
-              />
+              >
+                <option value="">Select department</option>
+                {PR_DEPARTMENT_OPTIONS.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
+              {legacyDepartmentValue ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Legacy value detected: {legacyDepartmentValue}. Select one of the standard
+                  departments before saving.
+                </p>
+              ) : null}
             </div>
 
             <div>
@@ -913,6 +1047,8 @@ function CreatePrPage() {
               getFilteredItemsForLine={getFilteredItemsForLine}
               onFieldChange={handleLineFieldChange}
               onSelectCatalogItem={handleSelectCatalogItem}
+              onUnitOptionChange={handleUnitOptionChange}
+              onCustomUnitChange={handleCustomUnitChange}
               onRemoveLine={handleRemoveLine}
               getLineEstimatedTotal={getLineEstimatedTotal}
               readOnly={isReadOnlyMode || isLoadingDraft}
@@ -925,6 +1061,8 @@ function CreatePrPage() {
               getFilteredItemsForLine={getFilteredItemsForLine}
               onFieldChange={handleLineFieldChange}
               onSelectCatalogItem={handleSelectCatalogItem}
+              onUnitOptionChange={handleUnitOptionChange}
+              onCustomUnitChange={handleCustomUnitChange}
               onRemoveLine={handleRemoveLine}
               getLineEstimatedTotal={getLineEstimatedTotal}
               readOnly={isReadOnlyMode || isLoadingDraft}

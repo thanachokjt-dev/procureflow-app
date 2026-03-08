@@ -77,6 +77,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/pr_phase4b_submit_policy.sql`
    - `supabase/pr_phase4_patch_rls.sql`
    - `supabase/pr_phase4c_pr_number_fix.sql`
+   - `supabase/pr_phase4e_department_normalization.sql` (optional data cleanup)
    - `supabase/pr_phase5a_manager_queue_rls.sql`
    - `supabase/pr_phase5b_all_authenticated_pr_creation.sql`
    - `supabase/pr_phase5c_manager_review_actions.sql`
@@ -105,6 +106,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/pr_phase4b_submit_policy.sql`
    - `supabase/pr_phase4_patch_rls.sql`
    - `supabase/pr_phase4c_pr_number_fix.sql`
+   - `supabase/pr_phase4e_department_normalization.sql` (optional data cleanup)
    - `supabase/pr_phase5a_manager_queue_rls.sql`
    - `supabase/pr_phase5b_all_authenticated_pr_creation.sql`
    - `supabase/pr_phase5c_manager_review_actions.sql`
@@ -251,6 +253,7 @@ supabase/
   pr_phase4b_submit_policy.sql
   pr_phase4_patch_rls.sql
   pr_phase4c_pr_number_fix.sql
+  pr_phase4e_department_normalization.sql
   pr_phase5a_manager_queue_rls.sql
   pr_phase5b_all_authenticated_pr_creation.sql
   pr_phase5c_manager_review_actions.sql

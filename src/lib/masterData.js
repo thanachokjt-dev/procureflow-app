@@ -180,7 +180,7 @@ export async function fetchActiveItems() {
   return supabase
     .from('items')
     .select(
-      'id, sku, item_name, category, brand, model, color, size, unit, description, spec_text, active',
+      'id, sku, item_name, category, brand, model, color, size, unit, description, spec_text, image_url, active',
     )
     .eq('active', true)
     .order('item_name', { ascending: true })
