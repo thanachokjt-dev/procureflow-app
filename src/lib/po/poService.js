@@ -12,9 +12,10 @@ import { createWorkflowHistoryEntry } from '../workflow/historyService'
 import { normalizePrStatus } from '../workflow/statusHelpers'
 import {
   PO_DEFAULT_STATUS,
+  PO_DEFAULT_CURRENCY,
+  PO_DETAIL_SELECT_LEGACY,
   PO_DETAIL_SELECT,
   PO_HEADER_SELECT,
-  PO_LINE_SELECT,
   PO_TABLES,
 } from './poConstants'
 
@@ -38,6 +39,49 @@ function normalizeNullableNumeric(value) {
   }
 
   return numericValue
+}
+
+function normalizeCurrency(value, fallback = PO_DEFAULT_CURRENCY) {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+
+  return normalized || fallback
+}
+
+function hasMissingCurrencyColumnError(error) {
+  const message = String(error?.message || '').toLowerCase()
+  return (
+    message.includes('po_lines_1.currency') ||
+    message.includes('po_lines.currency') ||
+    (message.includes('currency') && message.includes('does not exist'))
+  )
+}
+
+function stripCurrencyFieldFromLines(lines = []) {
+  return lines.map((line) => {
+    const nextLine = { ...line }
+    delete nextLine.currency
+    return nextLine
+  })
+}
+
+function withPoLineCurrencyFallback(poDraft) {
+  if (!poDraft) {
+    return poDraft
+  }
+
+  const nextLines = Array.isArray(poDraft.po_lines)
+    ? poDraft.po_lines.map((line) => ({
+        ...line,
+        currency: normalizeCurrency(line?.currency),
+      }))
+    : []
+
+  return {
+    ...poDraft,
+    po_lines: nextLines,
+  }
 }
 
 function normalizeVarianceReasons(reasons) {
@@ -195,7 +239,7 @@ function buildPoLinePayloadFromPrLines({ poId, prLines = [], preferredMap = new 
       requested_qty: requestedQty > 0 ? requestedQty : 1,
       ordered_qty: requestedQty > 0 ? requestedQty : 1,
       unit_price: unitPrice >= 0 ? unitPrice : 0,
-      currency: normalizeNullableText(preferred?.currency),
+      currency: normalizeCurrency(preferred?.currency),
       supplier_id: normalizeNullableText(preferred?.supplier_id),
       supplier_sku: normalizeNullableText(preferred?.supplier_sku),
       lead_time_days: normalizeNullableNumeric(preferred?.lead_time_days),
@@ -220,13 +264,30 @@ export async function fetchPoDraftBySourcePrId(sourcePrId) {
     return { data: null, error: new Error('Source PR ID is required.') }
   }
 
-  const { data, error } = await supabase
+  const primaryQuery = await supabase
     .from(PO_TABLES.HEADERS)
     .select(PO_DETAIL_SELECT)
     .eq('source_pr_id', normalizedSourcePrId)
     .maybeSingle()
 
-  return { data, error }
+  if (!primaryQuery.error) {
+    return { data: withPoLineCurrencyFallback(primaryQuery.data), error: null }
+  }
+
+  if (!hasMissingCurrencyColumnError(primaryQuery.error)) {
+    return { data: null, error: primaryQuery.error }
+  }
+
+  const legacyQuery = await supabase
+    .from(PO_TABLES.HEADERS)
+    .select(PO_DETAIL_SELECT_LEGACY)
+    .eq('source_pr_id', normalizedSourcePrId)
+    .maybeSingle()
+
+  return {
+    data: withPoLineCurrencyFallback(legacyQuery.data),
+    error: legacyQuery.error,
+  }
 }
 
 export async function fetchPoDraftDetail(poId) {
@@ -236,13 +297,30 @@ export async function fetchPoDraftDetail(poId) {
     return { data: null, error: new Error('PO ID is required.') }
   }
 
-  const { data, error } = await supabase
+  const primaryQuery = await supabase
     .from(PO_TABLES.HEADERS)
     .select(PO_DETAIL_SELECT)
     .eq('id', normalizedPoId)
     .single()
 
-  return { data, error }
+  if (!primaryQuery.error) {
+    return { data: withPoLineCurrencyFallback(primaryQuery.data), error: null }
+  }
+
+  if (!hasMissingCurrencyColumnError(primaryQuery.error)) {
+    return { data: null, error: primaryQuery.error }
+  }
+
+  const legacyQuery = await supabase
+    .from(PO_TABLES.HEADERS)
+    .select(PO_DETAIL_SELECT_LEGACY)
+    .eq('id', normalizedPoId)
+    .single()
+
+  return {
+    data: withPoLineCurrencyFallback(legacyQuery.data),
+    error: legacyQuery.error,
+  }
 }
 
 export async function fetchPoDraftHeadersBySourcePrIds(sourcePrIds = []) {
@@ -441,9 +519,13 @@ export async function createOrGetPoDraftFromPr(sourcePrId) {
     })),
   )
 
-  const { error: lineInsertError } = await supabase
-    .from(PO_TABLES.LINES)
-    .insert(linePayload)
+  let { error: lineInsertError } = await supabase.from(PO_TABLES.LINES).insert(linePayload)
+
+  if (lineInsertError && hasMissingCurrencyColumnError(lineInsertError)) {
+    const legacyLinePayload = stripCurrencyFieldFromLines(linePayload)
+    const legacyInsertResult = await supabase.from(PO_TABLES.LINES).insert(legacyLinePayload)
+    lineInsertError = legacyInsertResult.error
+  }
 
   if (lineInsertError) {
     await supabase.from(PO_TABLES.HEADERS).delete().eq('id', createdHeader.id)
@@ -528,7 +610,7 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
         requested_qty: normalizeNullableNumeric(line.requested_qty) || 0,
         ordered_qty: orderedQty === null || orderedQty <= 0 ? 1 : orderedQty,
         unit_price: unitPrice === null || unitPrice < 0 ? 0 : unitPrice,
-        currency: normalizeNullableText(line.currency),
+        currency: normalizeCurrency(line.currency),
         supplier_id: normalizeNullableText(line.supplier_id),
         supplier_sku: normalizeNullableText(line.supplier_sku),
         lead_time_days: normalizeNullableNumeric(line.lead_time_days),
@@ -536,9 +618,17 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
       }
     })
 
-    const { error: linesError } = await supabase
+    let { error: linesError } = await supabase
       .from(PO_TABLES.LINES)
       .upsert(linePayload, { onConflict: 'id' })
+
+    if (linesError && hasMissingCurrencyColumnError(linesError)) {
+      const legacyLinePayload = stripCurrencyFieldFromLines(linePayload)
+      const legacyUpsertResult = await supabase
+        .from(PO_TABLES.LINES)
+        .upsert(legacyLinePayload, { onConflict: 'id' })
+      linesError = legacyUpsertResult.error
+    }
 
     if (linesError) {
       return { data: null, error: linesError }

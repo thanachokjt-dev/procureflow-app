@@ -119,7 +119,7 @@ create table if not exists public.po_lines (
   requested_qty numeric(14,2) not null check (requested_qty > 0),
   ordered_qty numeric(14,2) not null check (ordered_qty > 0),
   unit_price numeric(14,2) not null default 0 check (unit_price >= 0),
-  currency text,
+  currency text not null default 'THB',
   line_total numeric(14,2) generated always as (coalesce(ordered_qty, 0) * coalesce(unit_price, 0)) stored,
   supplier_id uuid references public.suppliers(id) on delete set null,
   supplier_sku text,
@@ -139,13 +139,22 @@ alter table public.po_lines
   add column if not exists requested_qty numeric(14,2),
   add column if not exists ordered_qty numeric(14,2),
   add column if not exists unit_price numeric(14,2) default 0,
-  add column if not exists currency text,
+  add column if not exists currency text default 'THB',
   add column if not exists line_total numeric(14,2) generated always as (coalesce(ordered_qty, 0) * coalesce(unit_price, 0)) stored,
   add column if not exists supplier_id uuid,
   add column if not exists supplier_sku text,
   add column if not exists lead_time_days integer,
   add column if not exists remarks text,
   add column if not exists created_at timestamptz default timezone('utc', now());
+
+update public.po_lines
+set currency = 'THB'
+where currency is null
+   or btrim(currency) = '';
+
+alter table public.po_lines
+  alter column currency set default 'THB',
+  alter column currency set not null;
 
 create index if not exists idx_po_headers_source_pr_id
   on public.po_headers (source_pr_id);

@@ -6,6 +6,7 @@ import { formatCurrency, formatDate } from '../lib/formatters'
 import { fetchActiveSuppliers } from '../lib/masterData'
 import { createOrGetPoDraftFromPr, savePoDraft } from '../lib/po/poService'
 import { fetchPrDetailWithLines } from '../lib/pr/prService'
+import { PO_DEFAULT_CURRENCY } from '../lib/po/poConstants'
 import { PO_STATUSES } from '../lib/workflow/constants'
 import { getPoStatusLabel, getPrStatusLabel } from '../lib/workflow/statusHelpers'
 import { getVarianceReasonLabel } from '../lib/workflow/varianceConstants'
@@ -54,7 +55,7 @@ function mapPoLineToForm(line) {
     requested_qty: String(line.requested_qty ?? ''),
     ordered_qty: String(line.ordered_qty ?? line.requested_qty ?? ''),
     unit_price: String(line.unit_price ?? ''),
-    currency: line.currency || '',
+    currency: line.currency || PO_DEFAULT_CURRENCY,
     supplier_id: line.supplier_id || '',
     supplier_sku: line.supplier_sku || '',
     lead_time_days: String(line.lead_time_days ?? ''),
