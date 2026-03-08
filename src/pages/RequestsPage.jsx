@@ -11,9 +11,35 @@ function RequestsPage() {
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [departmentFilter, setDepartmentFilter] = useState('all')
+
+  const handleRetry = async () => {
+    if (!user?.id) {
+      setRequests([])
+      setLoading(false)
+      return
+    }
+
+    setLoading(true)
+    setErrorMessage('')
+
+    const { data, error } = await fetchMyPurchaseRequests(user.id)
+
+    if (error) {
+      setErrorMessage(error.message)
+      setRequests([])
+      setLoading(false)
+      return
+    }
+
+    setRequests(data || [])
+    setLoading(false)
+  }
 
   useEffect(() => {
-    const loadRequests = async () => {
+    const loadRequestsInEffect = async () => {
       if (!user?.id) {
         setRequests([])
         setLoading(false)
@@ -36,7 +62,7 @@ function RequestsPage() {
       setLoading(false)
     }
 
-    loadRequests()
+    loadRequestsInEffect()
 
     if (!user?.id) {
       return undefined
@@ -53,7 +79,7 @@ function RequestsPage() {
           filter: `requester_id=eq.${user.id}`,
         },
         () => {
-          loadRequests()
+          loadRequestsInEffect()
         },
       )
       .subscribe()
@@ -75,6 +101,41 @@ function RequestsPage() {
       rejected: rejectedCount,
     }
   }, [requests])
+
+  const departmentOptions = useMemo(() => {
+    const departments = requests
+      .map((item) => item.department)
+      .filter((department) => Boolean(department))
+
+    return Array.from(new Set(departments))
+  }, [requests])
+
+  const filteredRequests = useMemo(() => {
+    return requests.filter((item) => {
+      const normalizedSearch = searchTerm.trim().toLowerCase()
+
+      const matchesSearch =
+        normalizedSearch.length === 0 ||
+        item.title.toLowerCase().includes(normalizedSearch) ||
+        String(item.id).toLowerCase().includes(normalizedSearch) ||
+        String(item.supplier_name || '')
+          .toLowerCase()
+          .includes(normalizedSearch)
+
+      const matchesStatus = statusFilter === 'all' || item.status === statusFilter
+
+      const matchesDepartment =
+        departmentFilter === 'all' || item.department === departmentFilter
+
+      return matchesSearch && matchesStatus && matchesDepartment
+    })
+  }, [requests, searchTerm, statusFilter, departmentFilter])
+
+  const clearFilters = () => {
+    setSearchTerm('')
+    setStatusFilter('all')
+    setDepartmentFilter('all')
+  }
 
   return (
     <div className="space-y-6">
@@ -104,9 +165,63 @@ function RequestsPage() {
 
       {errorMessage ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
-          {errorMessage}
+          <p>{errorMessage}</p>
+          <button
+            type="button"
+            onClick={handleRetry}
+            className="mt-2 rounded-md border border-rose-300 bg-white px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-50"
+          >
+            Retry
+          </button>
         </div>
       ) : null}
+
+      <div className="grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 md:grid-cols-4">
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+          placeholder="Search title, ID, supplier..."
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-2"
+        />
+
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+        >
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+
+        <select
+          value={departmentFilter}
+          onChange={(event) => setDepartmentFilter(event.target.value)}
+          className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+        >
+          <option value="all">All Departments</option>
+          {departmentOptions.map((department) => (
+            <option key={department} value={department}>
+              {department}
+            </option>
+          ))}
+        </select>
+
+        <div className="flex items-center justify-between md:col-span-4">
+          <p className="text-xs text-slate-500">
+            Showing {filteredRequests.length} of {requests.length} requests
+          </p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+          >
+            Clear Filters
+          </button>
+        </div>
+      </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="min-w-full border-collapse text-left text-sm">
@@ -131,16 +246,16 @@ function RequestsPage() {
               </tr>
             ) : null}
 
-            {!loading && requests.length === 0 ? (
+            {!loading && filteredRequests.length === 0 ? (
               <tr>
                 <td className="px-3 py-3 text-slate-500" colSpan={8}>
-                  You have no requests yet.
+                  No requests match your current search and filters.
                 </td>
               </tr>
             ) : null}
 
             {!loading
-              ? requests.map((item) => (
+              ? filteredRequests.map((item) => (
                   <tr key={item.id} className="border-b border-slate-100 last:border-0">
                     <td className="px-3 py-3 font-medium text-slate-700">
                       {item.id.slice(0, 8)}

@@ -99,8 +99,36 @@ export async function fetchPendingPurchaseRequests() {
 }
 
 export async function createPurchaseRequest({ request, items }) {
+  const requestTitle = String(request?.title || '').trim()
+  const requestDepartment = String(request?.department || '').trim()
+  const requestJustification = String(request?.justification || '').trim()
+  const supplierName = String(request?.supplier_name || '').trim()
+
+  if (!requestTitle || !requestDepartment || !requestJustification) {
+    return {
+      data: null,
+      error: new Error('Title, department, and justification are required.'),
+    }
+  }
+
   if (!items || items.length === 0) {
     return { data: null, error: new Error('At least one item is required.') }
+  }
+
+  const invalidItem = items.find((item) => {
+    const itemName = String(item?.item_name || '').trim()
+    const qty = Number(item?.qty)
+    const unit = String(item?.unit || '').trim()
+    const unitPrice = Number(item?.unit_price)
+
+    return !itemName || !unit || Number.isNaN(qty) || qty <= 0 || Number.isNaN(unitPrice) || unitPrice < 0
+  })
+
+  if (invalidItem) {
+    return {
+      data: null,
+      error: new Error('Each line item needs item name, qty > 0, unit, and unit price >= 0.'),
+    }
   }
 
   const {
@@ -115,10 +143,10 @@ export async function createPurchaseRequest({ request, items }) {
   const requestPayload = {
     requester_id: user.id,
     requester_email: user.email || request.requester_email,
-    department: request.department,
-    supplier_name: request.supplier_name || null,
-    title: request.title,
-    justification: request.justification,
+    department: requestDepartment,
+    supplier_name: supplierName || null,
+    title: requestTitle,
+    justification: requestJustification,
     status: REQUEST_STATUS.PENDING,
     manager_comment: null,
   }
@@ -135,10 +163,10 @@ export async function createPurchaseRequest({ request, items }) {
 
   const itemsPayload = items.map((item) => ({
     request_id: insertedRequest.id,
-    item_name: item.item_name,
-    qty: item.qty,
-    unit: item.unit,
-    unit_price: item.unit_price,
+    item_name: String(item.item_name).trim(),
+    qty: Number(item.qty),
+    unit: String(item.unit).trim(),
+    unit_price: Number(item.unit_price),
   }))
 
   const { data: insertedItems, error: itemError } = await supabase
