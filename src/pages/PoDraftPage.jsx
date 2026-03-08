@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
+import { useAuth } from '../context/AuthContext'
 import { formatCurrency, formatDate } from '../lib/formatters'
 import { fetchActiveSuppliers } from '../lib/masterData'
 import { createOrGetPoDraftFromPr, savePoDraft } from '../lib/po/poService'
@@ -70,6 +71,7 @@ function getLineTotal(line) {
 }
 
 function PoDraftPage() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const { prId } = useParams()
@@ -287,6 +289,7 @@ function PoDraftPage() {
     }
 
     const headerSupplier = supplierById[headerSupplierId]
+    const varianceSubmittedAt = new Date().toISOString()
     const headerPayload = {
       supplier_id: headerSupplierId || null,
       supplier_name_snapshot: headerSupplier?.supplier_name || poDraft.supplier_name_snapshot || null,
@@ -294,7 +297,10 @@ function PoDraftPage() {
       status: nextStatus,
       variance_reasons: varianceResult.reasons,
       variance_summary: varianceMetadata,
-      variance_checked_at: new Date().toISOString(),
+      variance_checked_at: varianceSubmittedAt,
+      variance_status: varianceResult.hasVariance ? 'variance_detected' : 'no_variance',
+      variance_submitted_at: varianceSubmittedAt,
+      variance_submitted_by: user?.id || null,
     }
 
     const linePayload = lineItems.map((line) => ({

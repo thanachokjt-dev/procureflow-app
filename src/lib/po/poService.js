@@ -13,11 +13,23 @@ import { normalizePrStatus } from '../workflow/statusHelpers'
 import {
   PO_DEFAULT_STATUS,
   PO_DEFAULT_CURRENCY,
-  PO_DETAIL_SELECT_LEGACY,
   PO_DETAIL_SELECT,
+  PO_DETAIL_SELECT_LEGACY,
+  PO_DETAIL_SELECT_NO_VARIANCE,
+  PO_DETAIL_SELECT_NO_VARIANCE_LEGACY,
   PO_HEADER_SELECT,
+  PO_HEADER_SELECT_LEGACY,
   PO_TABLES,
 } from './poConstants'
+
+const PO_VARIANCE_OPTIONAL_FIELDS = [
+  'variance_reasons',
+  'variance_summary',
+  'variance_status',
+  'variance_submitted_at',
+  'variance_submitted_by',
+  'variance_checked_at',
+]
 
 function normalizeText(value) {
   return String(value || '').trim()
@@ -49,12 +61,46 @@ function normalizeCurrency(value, fallback = PO_DEFAULT_CURRENCY) {
   return normalized || fallback
 }
 
-function hasMissingCurrencyColumnError(error) {
+function hasMissingColumnError(error, { tableName, columnName }) {
   const message = String(error?.message || '').toLowerCase()
+
   return (
-    message.includes('po_lines_1.currency') ||
-    message.includes('po_lines.currency') ||
-    (message.includes('currency') && message.includes('does not exist'))
+    message.includes(`${tableName}.${columnName}`) ||
+    message.includes(`${tableName}_1.${columnName}`) ||
+    message.includes(`${tableName}_2.${columnName}`) ||
+    message.includes(`column "${columnName}" does not exist`) ||
+    message.includes(`column ${columnName} does not exist`)
+  )
+}
+
+function hasMissingCurrencyColumnError(error) {
+  return hasMissingColumnError(error, {
+    tableName: PO_TABLES.LINES,
+    columnName: 'currency',
+  })
+}
+
+function hasMissingPoHeaderVarianceColumnsError(error) {
+  return PO_VARIANCE_OPTIONAL_FIELDS.some((columnName) =>
+    hasMissingColumnError(error, { tableName: PO_TABLES.HEADERS, columnName }),
+  )
+}
+
+function isPoSchemaMismatchError(error) {
+  return hasMissingCurrencyColumnError(error) || hasMissingPoHeaderVarianceColumnsError(error)
+}
+
+function hasVarianceTypeMismatchError(error) {
+  const message = String(error?.message || '').toLowerCase()
+
+  const mentionsVarianceField =
+    message.includes('variance_reasons') || message.includes('variance_summary')
+
+  return (
+    mentionsVarianceField &&
+    (message.includes('is of type text') ||
+      message.includes('malformed array literal') ||
+      message.includes('invalid input syntax'))
   )
 }
 
@@ -64,6 +110,33 @@ function stripCurrencyFieldFromLines(lines = []) {
     delete nextLine.currency
     return nextLine
   })
+}
+
+function tryParseJson(value) {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const normalized = normalizeText(value)
+  if (!normalized) {
+    return null
+  }
+
+  try {
+    return JSON.parse(normalized)
+  } catch {
+    return null
+  }
+}
+
+function tryParseJsonObject(value) {
+  const parsed = tryParseJson(value)
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+
+  return parsed
 }
 
 function withPoLineCurrencyFallback(poDraft) {
@@ -85,13 +158,33 @@ function withPoLineCurrencyFallback(poDraft) {
 }
 
 function normalizeVarianceReasons(reasons) {
-  if (!Array.isArray(reasons)) {
+  if (Array.isArray(reasons)) {
+    return Array.from(
+      new Set(
+        reasons
+          .map((entry) =>
+            String(entry || '')
+              .trim()
+              .toLowerCase(),
+          )
+          .filter(Boolean),
+      ),
+    )
+  }
+
+  if (typeof reasons !== 'string') {
     return []
+  }
+
+  const parsedJson = tryParseJson(reasons)
+  if (Array.isArray(parsedJson)) {
+    return normalizeVarianceReasons(parsedJson)
   }
 
   return Array.from(
     new Set(
       reasons
+        .split(',')
         .map((entry) =>
           String(entry || '')
             .trim()
@@ -103,11 +196,140 @@ function normalizeVarianceReasons(reasons) {
 }
 
 function normalizeJsonObject(value) {
+  if (typeof value === 'string') {
+    return tryParseJsonObject(value)
+  }
+
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
   }
 
   return value
+}
+
+function withPoHeaderVarianceFallback(poDraft) {
+  if (!poDraft) {
+    return poDraft
+  }
+
+  return {
+    ...poDraft,
+    variance_reasons: normalizeVarianceReasons(poDraft.variance_reasons),
+    variance_summary: normalizeJsonObject(poDraft.variance_summary) || {},
+    variance_status: normalizeNullableText(poDraft.variance_status),
+    variance_submitted_at: normalizeNullableText(poDraft.variance_submitted_at),
+    variance_submitted_by: normalizeNullableText(poDraft.variance_submitted_by),
+    variance_checked_at: normalizeNullableText(poDraft.variance_checked_at),
+  }
+}
+
+function withPoDraftCompatibility(poDraft) {
+  return withPoLineCurrencyFallback(withPoHeaderVarianceFallback(poDraft))
+}
+
+function stripVarianceFieldsFromHeaderPayload(payload = {}) {
+  const nextPayload = { ...payload }
+  PO_VARIANCE_OPTIONAL_FIELDS.forEach((columnName) => {
+    delete nextPayload[columnName]
+  })
+  return nextPayload
+}
+
+function toJsonString(value) {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return null
+  }
+}
+
+function coerceVarianceFieldsToText(payload = {}) {
+  const nextPayload = { ...payload }
+  let changed = false
+
+  if ('variance_reasons' in nextPayload && Array.isArray(nextPayload.variance_reasons)) {
+    nextPayload.variance_reasons = nextPayload.variance_reasons.join(', ')
+    changed = true
+  }
+
+  if ('variance_summary' in nextPayload && normalizeJsonObject(nextPayload.variance_summary)) {
+    nextPayload.variance_summary = toJsonString(nextPayload.variance_summary)
+    changed = true
+  }
+
+  return { payload: nextPayload, changed }
+}
+
+async function runPoDraftDetailQuery(selectFn) {
+  const selectAttempts = [
+    PO_DETAIL_SELECT,
+    PO_DETAIL_SELECT_LEGACY,
+    PO_DETAIL_SELECT_NO_VARIANCE,
+    PO_DETAIL_SELECT_NO_VARIANCE_LEGACY,
+  ]
+
+  let latestError = null
+
+  for (const selectClause of selectAttempts) {
+    const result = await selectFn(selectClause)
+
+    if (!result.error) {
+      return { data: withPoDraftCompatibility(result.data), error: null }
+    }
+
+    latestError = result.error
+    if (!isPoSchemaMismatchError(result.error)) {
+      return { data: null, error: result.error }
+    }
+  }
+
+  return { data: null, error: latestError }
+}
+
+async function updatePoHeaderWithFallback(poId, headerUpdates = {}) {
+  if (!Object.keys(headerUpdates).length) {
+    return { error: null }
+  }
+
+  let payload = { ...headerUpdates }
+  let attemptedTypeCoercion = false
+
+  while (true) {
+    const { error } = await supabase.from(PO_TABLES.HEADERS).update(payload).eq('id', poId)
+
+    if (!error) {
+      return { error: null }
+    }
+
+    if (hasMissingPoHeaderVarianceColumnsError(error)) {
+      const reducedPayload = stripVarianceFieldsFromHeaderPayload(payload)
+
+      if (Object.keys(reducedPayload).length === Object.keys(payload).length) {
+        return { error }
+      }
+
+      if (!Object.keys(reducedPayload).length) {
+        return { error: null }
+      }
+
+      payload = reducedPayload
+      continue
+    }
+
+    if (!attemptedTypeCoercion && hasVarianceTypeMismatchError(error)) {
+      const { payload: coercedPayload, changed } = coerceVarianceFieldsToText(payload)
+
+      if (!changed) {
+        return { error }
+      }
+
+      payload = coercedPayload
+      attemptedTypeCoercion = true
+      continue
+    }
+
+    return { error }
+  }
 }
 
 function normalizePositiveInteger(value, fallback = 300) {
@@ -135,6 +357,7 @@ function mapVarianceDecisionToTransition(decision) {
     return {
       action: WORKFLOW_ACTIONS.CONFIRM_VARIANCE,
       toStatus: PO_STATUSES.PENDING_FINAL_APPROVAL,
+      varianceStatus: 'confirmed',
     }
   }
 
@@ -142,6 +365,7 @@ function mapVarianceDecisionToTransition(decision) {
     return {
       action: APPROVAL_ACTIONS.REJECT,
       toStatus: PO_STATUSES.CANCELLED,
+      varianceStatus: 'rejected',
     }
   }
 
@@ -149,6 +373,7 @@ function mapVarianceDecisionToTransition(decision) {
     return {
       action: APPROVAL_ACTIONS.SEND_BACK,
       toStatus: PO_STATUSES.DRAFT,
+      varianceStatus: 'sent_back',
     }
   }
 
@@ -264,30 +489,13 @@ export async function fetchPoDraftBySourcePrId(sourcePrId) {
     return { data: null, error: new Error('Source PR ID is required.') }
   }
 
-  const primaryQuery = await supabase
-    .from(PO_TABLES.HEADERS)
-    .select(PO_DETAIL_SELECT)
-    .eq('source_pr_id', normalizedSourcePrId)
-    .maybeSingle()
-
-  if (!primaryQuery.error) {
-    return { data: withPoLineCurrencyFallback(primaryQuery.data), error: null }
-  }
-
-  if (!hasMissingCurrencyColumnError(primaryQuery.error)) {
-    return { data: null, error: primaryQuery.error }
-  }
-
-  const legacyQuery = await supabase
-    .from(PO_TABLES.HEADERS)
-    .select(PO_DETAIL_SELECT_LEGACY)
-    .eq('source_pr_id', normalizedSourcePrId)
-    .maybeSingle()
-
-  return {
-    data: withPoLineCurrencyFallback(legacyQuery.data),
-    error: legacyQuery.error,
-  }
+  return runPoDraftDetailQuery((selectClause) =>
+    supabase
+      .from(PO_TABLES.HEADERS)
+      .select(selectClause)
+      .eq('source_pr_id', normalizedSourcePrId)
+      .maybeSingle(),
+  )
 }
 
 export async function fetchPoDraftDetail(poId) {
@@ -297,30 +505,9 @@ export async function fetchPoDraftDetail(poId) {
     return { data: null, error: new Error('PO ID is required.') }
   }
 
-  const primaryQuery = await supabase
-    .from(PO_TABLES.HEADERS)
-    .select(PO_DETAIL_SELECT)
-    .eq('id', normalizedPoId)
-    .single()
-
-  if (!primaryQuery.error) {
-    return { data: withPoLineCurrencyFallback(primaryQuery.data), error: null }
-  }
-
-  if (!hasMissingCurrencyColumnError(primaryQuery.error)) {
-    return { data: null, error: primaryQuery.error }
-  }
-
-  const legacyQuery = await supabase
-    .from(PO_TABLES.HEADERS)
-    .select(PO_DETAIL_SELECT_LEGACY)
-    .eq('id', normalizedPoId)
-    .single()
-
-  return {
-    data: withPoLineCurrencyFallback(legacyQuery.data),
-    error: legacyQuery.error,
-  }
+  return runPoDraftDetailQuery((selectClause) =>
+    supabase.from(PO_TABLES.HEADERS).select(selectClause).eq('id', normalizedPoId).single(),
+  )
 }
 
 export async function fetchPoDraftHeadersBySourcePrIds(sourcePrIds = []) {
@@ -353,47 +540,65 @@ export async function fetchVarianceConfirmationQueue({
   const normalizedLimit = normalizePositiveInteger(limit, 500)
   const ascending = normalizeSortOrder(order, 'asc') === 'asc'
 
-  let query = supabase
-    .from(PO_TABLES.HEADERS)
-    .select(
-      `
-      ${PO_HEADER_SELECT},
-      po_lines (
-        id,
-        line_total
-      ),
-      source_pr:source_pr_id (
-        id,
-        pr_number,
-        status
+  const runQuery = async (headerSelectClause) => {
+    let query = supabase
+      .from(PO_TABLES.HEADERS)
+      .select(
+        `
+        ${headerSelectClause},
+        po_lines (
+          id,
+          line_total
+        ),
+        source_pr:source_pr_id (
+          id,
+          pr_number,
+          status
+        )
+        `,
       )
-      `,
-    )
-    .order('created_at', { ascending })
-    .limit(normalizedLimit)
+      .order('created_at', { ascending })
+      .limit(normalizedLimit)
 
-  if (normalizedStatus && normalizedStatus !== 'all') {
-    query = query.eq('status', normalizedStatus)
+    if (normalizedStatus && normalizedStatus !== 'all') {
+      query = query.eq('status', normalizedStatus)
+    }
+
+    if (normalizedDepartment && normalizedDepartment !== 'all') {
+      query = query.eq('department', normalizedDepartment)
+    }
+
+    if (normalizedSearch) {
+      query = query.or(
+        [
+          `po_number.ilike.%${normalizedSearch}%`,
+          `department.ilike.%${normalizedSearch}%`,
+          `requester_name.ilike.%${normalizedSearch}%`,
+          `purpose.ilike.%${normalizedSearch}%`,
+          `supplier_name_snapshot.ilike.%${normalizedSearch}%`,
+        ].join(','),
+      )
+    }
+
+    return query
   }
 
-  if (normalizedDepartment && normalizedDepartment !== 'all') {
-    query = query.eq('department', normalizedDepartment)
+  let { data, error } = await runQuery(PO_HEADER_SELECT)
+
+  if (error && hasMissingPoHeaderVarianceColumnsError(error)) {
+    const fallbackResult = await runQuery(PO_HEADER_SELECT_LEGACY)
+    data = fallbackResult.data
+    error = fallbackResult.error
   }
 
-  if (normalizedSearch) {
-    query = query.or(
-      [
-        `po_number.ilike.%${normalizedSearch}%`,
-        `department.ilike.%${normalizedSearch}%`,
-        `requester_name.ilike.%${normalizedSearch}%`,
-        `purpose.ilike.%${normalizedSearch}%`,
-        `supplier_name_snapshot.ilike.%${normalizedSearch}%`,
-      ].join(','),
-    )
+  if (error) {
+    return { data: [], error }
   }
 
-  const { data, error } = await query
-  return { data: data || [], error }
+  return {
+    data: (data || []).map((row) => withPoDraftCompatibility(row)),
+    error: null,
+  }
 }
 
 export async function fetchPoVarianceReviewDetail(poId) {
@@ -501,7 +706,7 @@ export async function createOrGetPoDraftFromPr(sourcePrId) {
   const { data: createdHeader, error: headerError } = await supabase
     .from(PO_TABLES.HEADERS)
     .insert(headerPayload)
-    .select(PO_HEADER_SELECT)
+    .select(PO_HEADER_SELECT_LEGACY)
     .single()
 
   if (headerError || !createdHeader?.id) {
@@ -582,11 +787,27 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
     normalizedHeaderUpdates.variance_checked_at = normalizeNullableText(headerUpdates.variance_checked_at)
   }
 
+  if ('variance_status' in headerUpdates) {
+    normalizedHeaderUpdates.variance_status = normalizeNullableText(headerUpdates.variance_status)
+  }
+
+  if ('variance_submitted_at' in headerUpdates) {
+    normalizedHeaderUpdates.variance_submitted_at = normalizeNullableText(
+      headerUpdates.variance_submitted_at,
+    )
+  }
+
+  if ('variance_submitted_by' in headerUpdates) {
+    normalizedHeaderUpdates.variance_submitted_by = normalizeNullableText(
+      headerUpdates.variance_submitted_by,
+    )
+  }
+
   if (Object.keys(normalizedHeaderUpdates).length > 0) {
-    const { error: headerError } = await supabase
-      .from(PO_TABLES.HEADERS)
-      .update(normalizedHeaderUpdates)
-      .eq('id', normalizedPoId)
+    const { error: headerError } = await updatePoHeaderWithFallback(
+      normalizedPoId,
+      normalizedHeaderUpdates,
+    )
 
     if (headerError) {
       return { data: null, error: headerError }
@@ -700,6 +921,7 @@ export async function applyPoVarianceDecision({
       status: transition.toStatus,
       variance_summary: nextVarianceSummary,
       variance_checked_at: reviewedAt,
+      variance_status: transition.varianceStatus,
     },
   })
 
