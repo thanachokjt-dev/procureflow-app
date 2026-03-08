@@ -5,10 +5,12 @@ import PublicRoute from './components/PublicRoute'
 import { useAuth } from './context/AuthContext'
 import { ROLES } from './lib/roles'
 import DashboardPage from './pages/DashboardPage'
+import ItemMasterPage from './pages/ItemMasterPage'
 import LoginPage from './pages/LoginPage'
 import ManagerApprovalPage from './pages/ManagerApprovalPage'
 import NewRequestPage from './pages/NewRequestPage'
 import RequestsPage from './pages/RequestsPage'
+import SupplierMasterPage from './pages/SupplierMasterPage'
 
 function FallbackRedirect() {
   const { isAuthenticated } = useAuth()
@@ -40,6 +42,22 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
                 <ManagerApprovalPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/supplier-master"
+            element={
+              <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
+                <SupplierMasterPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/item-master"
+            element={
+              <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
+                <ItemMasterPage />
               </ProtectedRoute>
             }
           />

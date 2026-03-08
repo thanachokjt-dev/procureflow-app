@@ -4,6 +4,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Supabase email/password authentication
 - Role-based access control (`staff`, `manager`, `admin`)
 - Row Level Security policies in PostgreSQL
+- Phase 1 master data modules (Supplier Master, Item Master)
 
 ## Features
 - Sign in / sign out with session persistence
@@ -12,6 +13,9 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Staff can create requests and view only their own requests
 - Manager can view pending requests and approve/reject
 - Admin can access everything
+- Manager/Admin can manage Supplier Master and Item Master
+- New Request supports multiple line items
+- New Request uses Supplier Master + Item Master selections
 
 ## Tech Stack
 - React (Vite)
@@ -31,7 +35,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    ```bash
    cp .env.example .env
    ```
-2. On Windows PowerShell, use:
+2. On Windows PowerShell:
    ```powershell
    Copy-Item .env.example .env
    ```
@@ -44,19 +48,22 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 ## 3) Apply Database Schema + RLS
 1. Open Supabase Dashboard
 2. Go to `SQL Editor`
-3. Open and run:
+3. Run SQL files in this order:
    - `supabase/schema.sql`
-4. This script creates:
+   - `supabase/procurement_schema.sql`
+   - `supabase/master_data_phase1.sql`
+4. These scripts create:
    - `profiles`
    - `purchase_requests`
    - `purchase_request_items`
+   - `suppliers`
+   - `items`
    - RLS policies for `staff`, `manager`, `admin`
-   - Trigger to auto-create `profiles` row when a new auth user is created
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
 2. Copy each user's UUID from Supabase Auth users table
-3. Run SQL to assign roles (example):
+3. Assign roles:
    ```sql
    update public.profiles set role = 'manager' where id = '<manager-user-uuid>';
    update public.profiles set role = 'admin' where id = '<admin-user-uuid>';
@@ -102,7 +109,8 @@ src/
     AuthContext.jsx
   lib/
     formatters.js
-    purchaseRequests.js
+    masterData.js
+    procurementData.js
     roles.js
     supabaseClient.js
   pages/
@@ -111,9 +119,13 @@ src/
     NewRequestPage.jsx
     RequestsPage.jsx
     ManagerApprovalPage.jsx
+    SupplierMasterPage.jsx
+    ItemMasterPage.jsx
   App.jsx
   main.jsx
   index.css
 supabase/
   schema.sql
+  procurement_schema.sql
+  master_data_phase1.sql
 ```

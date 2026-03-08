@@ -24,6 +24,16 @@ const navItems = [
     label: 'Manager Approval',
     roles: [ROLES.MANAGER, ROLES.ADMIN],
   },
+  {
+    to: '/supplier-master',
+    label: 'Supplier Master',
+    roles: [ROLES.MANAGER, ROLES.ADMIN],
+  },
+  {
+    to: '/item-master',
+    label: 'Item Master',
+    roles: [ROLES.MANAGER, ROLES.ADMIN],
+  },
 ]
 
 function AppLayout() {
