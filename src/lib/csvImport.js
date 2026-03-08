@@ -137,13 +137,17 @@ function escapeCsvValue(value) {
   return stringValue
 }
 
-export function downloadCsvTemplate(fileName, headers = [], sampleRows = []) {
+function buildCsvContent(headers = [], rows = []) {
   const headerLine = headers.map(escapeCsvValue).join(',')
-  const rowLines = sampleRows.map((row) =>
+  const rowLines = rows.map((row) =>
     headers.map((header) => escapeCsvValue(row[header])).join(','),
   )
 
-  const csvContent = [headerLine, ...rowLines].join('\n')
+  return [headerLine, ...rowLines].join('\n')
+}
+
+export function downloadCsvRows(fileName, headers = [], rows = []) {
+  const csvContent = buildCsvContent(headers, rows)
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -154,6 +158,10 @@ export function downloadCsvTemplate(fileName, headers = [], sampleRows = []) {
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
+}
+
+export function downloadCsvTemplate(fileName, headers = [], sampleRows = []) {
+  downloadCsvRows(fileName, headers, sampleRows)
 }
 
 export function parseCsvBoolean(rawValue, defaultValue = true) {

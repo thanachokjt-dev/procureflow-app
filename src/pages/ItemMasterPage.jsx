@@ -1,20 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
-import {
-  downloadCsvTemplate,
-  getMissingRequiredColumns,
-  parseCsvBoolean,
-  parseCsvFile,
-} from '../lib/csvImport'
+import { downloadCsvTemplate } from '../lib/csvImport'
 import {
   createItem,
   deleteItem,
   fetchItems,
   skuExists,
   updateItem,
-  upsertItems,
 } from '../lib/masterData'
+import {
+  createItemImportPreview,
+  downloadItemImportErrorsCsv,
+  ITEM_IMPORT_MODES,
+  ITEM_IMPORT_OPTIONAL_COLUMNS,
+  ITEM_IMPORT_REQUIRED_COLUMNS,
+  ITEM_IMPORT_TEMPLATE_COLUMNS,
+  runItemImport,
+} from '../lib/itemCsvImport'
 import { hasRoleAccess, ROLES } from '../lib/roles'
 
 const initialItemForm = {
@@ -32,73 +35,23 @@ const initialItemForm = {
   active: true,
 }
 
-const itemTemplateColumns = [
-  'sku',
-  'item_name',
-  'category',
-  'brand',
-  'model',
-  'color',
-  'size',
-  'unit',
-  'description',
-  'spec_text',
-  'image_url',
-  'active',
+const importModeOptions = [
+  {
+    value: ITEM_IMPORT_MODES.CREATE_ONLY,
+    label: 'Create only',
+    description: 'Skip rows where SKU already exists.',
+  },
+  {
+    value: ITEM_IMPORT_MODES.UPDATE_ONLY,
+    label: 'Update only',
+    description: 'Update rows only when SKU already exists.',
+  },
+  {
+    value: ITEM_IMPORT_MODES.UPSERT,
+    label: 'Upsert',
+    description: 'Create new SKUs and update existing SKUs.',
+  },
 ]
-
-const itemRequiredColumns = ['sku', 'item_name', 'unit']
-
-function buildItemPayloadFromCsv(values) {
-  const errors = []
-
-  const sku = String(values.sku || '').trim()
-  const itemName = String(values.item_name || '').trim()
-  const category = String(values.category || '').trim()
-  const brand = String(values.brand || '').trim()
-  const model = String(values.model || '').trim()
-  const color = String(values.color || '').trim()
-  const size = String(values.size || '').trim()
-  const unit = String(values.unit || '').trim()
-  const description = String(values.description || '').trim()
-  const specText = String(values.spec_text || '').trim()
-  const imageUrl = String(values.image_url || '').trim()
-
-  if (!sku) {
-    errors.push('sku is required.')
-  }
-
-  if (!itemName) {
-    errors.push('item_name is required.')
-  }
-
-  if (!unit) {
-    errors.push('unit is required.')
-  }
-
-  const activeResult = parseCsvBoolean(values.active, true)
-  if (activeResult.error) {
-    errors.push(activeResult.error)
-  }
-
-  return {
-    errors,
-    payload: {
-      sku,
-      item_name: itemName,
-      category: category || null,
-      brand: brand || null,
-      model: model || null,
-      color: color || null,
-      size: size || null,
-      unit,
-      description: description || null,
-      spec_text: specText || null,
-      image_url: imageUrl || null,
-      active: activeResult.value,
-    },
-  }
-}
 
 function ItemMasterPage() {
   const { role } = useAuth()
@@ -114,8 +67,10 @@ function ItemMasterPage() {
   const [formValues, setFormValues] = useState(initialItemForm)
   const [editingItemId, setEditingItemId] = useState(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [importMode, setImportMode] = useState(ITEM_IMPORT_MODES.UPSERT)
   const [importPreview, setImportPreview] = useState(null)
   const [isImporting, setIsImporting] = useState(false)
+  const [importSummary, setImportSummary] = useState(null)
 
   const loadItems = async () => {
     setLoading(true)
@@ -261,7 +216,7 @@ function ItemMasterPage() {
   }
 
   const handleCsvTemplateDownload = () => {
-    downloadCsvTemplate('item_import_template.csv', itemTemplateColumns, [
+    downloadCsvTemplate('item_import_template.csv', ITEM_IMPORT_TEMPLATE_COLUMNS, [
       {
         sku: 'ITM-001',
         item_name: '24-inch Monitor',
@@ -273,7 +228,7 @@ function ItemMasterPage() {
         unit: 'pcs',
         description: 'Office monitor',
         spec_text: 'IPS, 1080p, HDMI',
-        image_url: '',
+        image_url: 'https://example.com/monitor.jpg',
         active: 'true',
       },
     ])
@@ -289,57 +244,22 @@ function ItemMasterPage() {
 
     setErrorMessage('')
     setSuccessMessage('')
+    setImportSummary(null)
 
-    const { normalizedHeaders, records, parseError } = await parseCsvFile(selectedFile)
+    const { preview, error } = await createItemImportPreview(selectedFile)
 
-    if (parseError) {
+    if (error) {
       setImportPreview(null)
-      setErrorMessage(parseError)
+      setErrorMessage(error)
       return
     }
 
-    const missingColumns = getMissingRequiredColumns(normalizedHeaders, itemRequiredColumns)
-
-    if (missingColumns.length > 0) {
-      setImportPreview(null)
-      setErrorMessage(`Missing required columns: ${missingColumns.join(', ')}`)
-      return
-    }
-
-    if (!records.length) {
-      setImportPreview(null)
-      setErrorMessage('CSV file has no data rows.')
-      return
-    }
-
-    const validRows = []
-    const invalidRows = []
-
-    records.forEach((record) => {
-      const { errors, payload } = buildItemPayloadFromCsv(record.values)
-
-      if (errors.length > 0) {
-        invalidRows.push({
-          rowNumber: record.rowNumber,
-          errors,
-        })
-        return
-      }
-
-      validRows.push(payload)
-    })
-
-    setImportPreview({
-      fileName: selectedFile.name,
-      validRows,
-      invalidRows,
-      totalRows: records.length,
-    })
+    setImportPreview(preview)
   }
 
   const handleImportItems = async () => {
-    if (!importPreview || importPreview.validRows.length === 0) {
-      setErrorMessage('No valid item rows to import.')
+    if (!importPreview) {
+      setErrorMessage('Upload and preview a CSV file first.')
       return
     }
 
@@ -347,19 +267,29 @@ function ItemMasterPage() {
     setErrorMessage('')
     setSuccessMessage('')
 
-    const { error } = await upsertItems(importPreview.validRows)
+    const { summary: resultSummary, error } = await runItemImport({
+      preview: importPreview,
+      mode: importMode,
+    })
 
     if (error) {
-      setErrorMessage(`Item import failed: ${error.message}`)
+      setErrorMessage(`Item import failed: ${error}`)
       setIsImporting(false)
       return
     }
 
-    setSuccessMessage(
-      `Item import complete. Upserted ${importPreview.validRows.length} row(s) and skipped ${importPreview.invalidRows.length} invalid row(s).`,
-    )
+    setImportSummary(resultSummary)
+    setSuccessMessage('Item import finished. Review the summary below.')
     setIsImporting(false)
     await loadItems()
+  }
+
+  const handleDownloadFailedRowsCsv = () => {
+    if (!importSummary?.failedRows?.length) {
+      return
+    }
+
+    downloadItemImportErrorsCsv('item_import_failed_rows.csv', importSummary.failedRows)
   }
 
   const handleEdit = (item) => {
@@ -430,13 +360,16 @@ function ItemMasterPage() {
         <section className="space-y-3">
           {canImport ? (
             <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
                     CSV Import
                   </h3>
                   <p className="mt-1 text-xs text-slate-500">
-                    Required columns: {itemRequiredColumns.join(', ')}
+                    Required: {ITEM_IMPORT_REQUIRED_COLUMNS.join(', ')}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Optional: {ITEM_IMPORT_OPTIONAL_COLUMNS.join(', ')}
                   </p>
                 </div>
                 <button
@@ -448,12 +381,39 @@ function ItemMasterPage() {
                 </button>
               </div>
 
-              <input
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleCsvFileChange}
-                className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-100"
-              />
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Import Mode
+                  </label>
+                  <select
+                    value={importMode}
+                    onChange={(event) => setImportMode(event.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                  >
+                    {importModeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {importModeOptions.find((option) => option.value === importMode)?.description}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Upload CSV
+                  </label>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={handleCsvFileChange}
+                    className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-md file:border file:border-slate-300 file:bg-white file:px-3 file:py-2 file:text-xs file:font-medium file:text-slate-700 hover:file:bg-slate-100"
+                  />
+                </div>
+              </div>
 
               {importPreview ? (
                 <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
@@ -463,15 +423,18 @@ function ItemMasterPage() {
                     </p>
                     <button
                       type="button"
-                      onClick={() => setImportPreview(null)}
+                      onClick={() => {
+                        setImportPreview(null)
+                        setImportSummary(null)
+                      }}
                       className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                     >
-                      Clear Preview
+                      Clear
                     </button>
                   </div>
 
                   <div className="grid gap-2 text-xs text-slate-600 md:grid-cols-3">
-                    <p>Total rows: {importPreview.totalRows}</p>
+                    <p>Total rows detected: {importPreview.totalRows}</p>
                     <p className="text-emerald-700">Valid rows: {importPreview.validRows.length}</p>
                     <p className="text-rose-700">Invalid rows: {importPreview.invalidRows.length}</p>
                   </div>
@@ -484,54 +447,79 @@ function ItemMasterPage() {
                   >
                     {isImporting
                       ? 'Importing...'
-                      : `Import ${importPreview.validRows.length} Valid Row(s)`}
+                      : `Run Import (${importModeOptions.find((option) => option.value === importMode)?.label})`}
                   </button>
 
-                  {importPreview.validRows.length > 0 ? (
-                    <div className="overflow-x-auto rounded-md border border-slate-200">
-                      <table className="min-w-full border-collapse text-left text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                            <th className="px-2 py-2 font-medium">SKU</th>
-                            <th className="px-2 py-2 font-medium">Item Name</th>
-                            <th className="px-2 py-2 font-medium">Unit</th>
-                            <th className="px-2 py-2 font-medium">Active</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {importPreview.validRows.slice(0, 5).map((row, index) => (
-                            <tr key={`${row.sku}-${index}`} className="border-b border-slate-100 last:border-0">
-                              <td className="px-2 py-2">{row.sku}</td>
-                              <td className="px-2 py-2">{row.item_name}</td>
-                              <td className="px-2 py-2">{row.unit}</td>
-                              <td className="px-2 py-2">{row.active ? 'true' : 'false'}</td>
+                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                    <table className="min-w-full border-collapse text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                          <th className="px-2 py-2 font-medium">Row</th>
+                          <th className="px-2 py-2 font-medium">SKU</th>
+                          <th className="px-2 py-2 font-medium">Item Name</th>
+                          <th className="px-2 py-2 font-medium">Unit</th>
+                          <th className="px-2 py-2 font-medium">Status</th>
+                          <th className="px-2 py-2 font-medium">Errors</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.rows.slice(0, 20).map((row) => {
+                          const isValid = row.errors.length === 0
+
+                          return (
+                            <tr key={`preview-row-${row.rowNumber}`} className="border-b border-slate-100 last:border-0">
+                              <td className="px-2 py-2">{row.rowNumber}</td>
+                              <td className="px-2 py-2">{row.rowValues.sku || '-'}</td>
+                              <td className="px-2 py-2">{row.rowValues.item_name || '-'}</td>
+                              <td className="px-2 py-2">{row.rowValues.unit || '-'}</td>
+                              <td className="px-2 py-2">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                    isValid
+                                      ? 'bg-emerald-50 text-emerald-700'
+                                      : 'bg-rose-50 text-rose-700'
+                                  }`}
+                                >
+                                  {isValid ? 'Valid' : 'Invalid'}
+                                </span>
+                              </td>
+                              <td className="px-2 py-2 text-rose-700">
+                                {isValid ? '-' : row.errors.join(' ')}
+                              </td>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : null}
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
 
-                  {importPreview.validRows.length > 5 ? (
-                    <p className="text-xs text-slate-500">
-                      Showing first 5 valid rows in preview.
-                    </p>
+                  {importPreview.rows.length > 20 ? (
+                    <p className="text-xs text-slate-500">Showing first 20 rows in preview.</p>
                   ) : null}
+                </div>
+              ) : null}
 
-                  {importPreview.invalidRows.length > 0 ? (
-                    <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
-                      <p className="font-medium">Invalid rows (not imported):</p>
-                      <ul className="mt-2 list-disc space-y-1 pl-5">
-                        {importPreview.invalidRows.slice(0, 10).map((row) => (
-                          <li key={`invalid-item-row-${row.rowNumber}`}>
-                            Row {row.rowNumber}: {row.errors.join(' ')}
-                          </li>
-                        ))}
-                      </ul>
-                      {importPreview.invalidRows.length > 10 ? (
-                        <p className="mt-2">Showing first 10 invalid rows.</p>
-                      ) : null}
-                    </div>
+              {importSummary ? (
+                <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
+                  <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Import Result Summary
+                  </h4>
+                  <div className="grid gap-2 text-xs text-slate-700 md:grid-cols-5">
+                    <p>Total: {importSummary.totalRows}</p>
+                    <p className="text-emerald-700">Created: {importSummary.created}</p>
+                    <p className="text-sky-700">Updated: {importSummary.updated}</p>
+                    <p className="text-amber-700">Skipped: {importSummary.skipped}</p>
+                    <p className="text-rose-700">Failed: {importSummary.failed}</p>
+                  </div>
+
+                  {importSummary.failed > 0 ? (
+                    <button
+                      type="button"
+                      onClick={handleDownloadFailedRowsCsv}
+                      className="rounded-md border border-rose-300 bg-white px-3 py-2 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                    >
+                      Download Failed Rows CSV
+                    </button>
                   ) : null}
                 </div>
               ) : null}
@@ -594,6 +582,7 @@ function ItemMasterPage() {
             <table className="min-w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                  <th className="px-3 py-2.5 font-medium">Image</th>
                   <th className="px-3 py-2.5 font-medium">SKU</th>
                   <th className="px-3 py-2.5 font-medium">Item Name</th>
                   <th className="px-3 py-2.5 font-medium">Category</th>
@@ -606,7 +595,7 @@ function ItemMasterPage() {
               <tbody className="bg-white">
                 {loading ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={8}>
                       Loading items...
                     </td>
                   </tr>
@@ -614,7 +603,7 @@ function ItemMasterPage() {
 
                 {!loading && items.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={7}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={8}>
                       No items match the current filters.
                     </td>
                   </tr>
@@ -623,6 +612,18 @@ function ItemMasterPage() {
                 {!loading
                   ? items.map((item) => (
                       <tr key={item.id} className="border-b border-slate-100 last:border-0">
+                        <td className="px-3 py-3">
+                          {item.image_url ? (
+                            <img
+                              src={item.image_url}
+                              alt={item.item_name || item.sku}
+                              className="h-10 w-10 rounded-md border border-slate-200 object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </td>
                         <td className="px-3 py-3 font-medium text-slate-700">{item.sku}</td>
                         <td className="px-3 py-3 text-slate-700">{item.item_name}</td>
                         <td className="px-3 py-3 text-slate-600">{item.category || '-'}</td>

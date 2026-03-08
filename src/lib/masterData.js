@@ -150,6 +150,32 @@ export async function createItem(payload) {
   return supabase.from('items').insert(payload).select().single()
 }
 
+export async function fetchExistingItemSkus(skus = []) {
+  const normalizedSkus = Array.from(
+    new Set(skus.map((sku) => String(sku || '').trim()).filter(Boolean)),
+  )
+
+  if (!normalizedSkus.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 500
+  const existingSkus = []
+
+  for (let index = 0; index < normalizedSkus.length; index += batchSize) {
+    const batch = normalizedSkus.slice(index, index + batchSize)
+    const { data, error } = await supabase.from('items').select('sku').in('sku', batch)
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    existingSkus.push(...(data || []).map((row) => String(row.sku || '').trim()))
+  }
+
+  return { data: Array.from(new Set(existingSkus)), error: null }
+}
+
 export async function upsertItems(rows = []) {
   if (!rows.length) {
     return { data: [], error: null }
@@ -177,6 +203,15 @@ export async function upsertItems(rows = []) {
 
 export async function updateItem(itemId, payload) {
   return supabase.from('items').update(payload).eq('id', itemId).select().single()
+}
+
+export async function updateItemBySku(sku, payload) {
+  return supabase
+    .from('items')
+    .update(payload)
+    .eq('sku', sku)
+    .select('id, sku')
+    .maybeSingle()
 }
 
 export async function deleteItem(itemId) {
