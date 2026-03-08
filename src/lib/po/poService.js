@@ -1,10 +1,11 @@
 import { fetchPreferredSupplierMappings } from '../masterData'
-import { fetchPrDetailWithLines } from '../pr/prService'
+import { fetchPrDetailWithLines, updatePrDraftHeader } from '../pr/prService'
 import { supabase } from '../supabaseClient'
 import {
   APPROVAL_ACTIONS,
   DOCUMENT_TYPES,
   PO_STATUSES,
+  PR_STATUS_LIST,
   PR_STATUSES,
   WORKFLOW_ACTIONS,
 } from '../workflow/constants'
@@ -29,7 +30,14 @@ const PO_VARIANCE_OPTIONAL_FIELDS = [
   'variance_submitted_at',
   'variance_submitted_by',
   'variance_checked_at',
+  'variance_checked_by',
+  'variance_checked_notes',
+  'variance_approved_at',
+  'variance_approved_by',
+  'variance_approval_notes',
 ]
+
+const SOURCE_PR_LINE_FIELD = 'source_pr_line_id'
 
 function normalizeText(value) {
   return String(value || '').trim()
@@ -86,8 +94,19 @@ function hasMissingPoHeaderVarianceColumnsError(error) {
   )
 }
 
+function hasMissingSourcePrLineIdColumnError(error) {
+  return hasMissingColumnError(error, {
+    tableName: PO_TABLES.LINES,
+    columnName: SOURCE_PR_LINE_FIELD,
+  })
+}
+
 function isPoSchemaMismatchError(error) {
-  return hasMissingCurrencyColumnError(error) || hasMissingPoHeaderVarianceColumnsError(error)
+  return (
+    hasMissingCurrencyColumnError(error) ||
+    hasMissingPoHeaderVarianceColumnsError(error) ||
+    hasMissingSourcePrLineIdColumnError(error)
+  )
 }
 
 function hasVarianceTypeMismatchError(error) {
@@ -110,6 +129,28 @@ function stripCurrencyFieldFromLines(lines = []) {
     delete nextLine.currency
     return nextLine
   })
+}
+
+function stripSourcePrLineIdFieldFromLines(lines = []) {
+  return lines.map((line) => {
+    const nextLine = { ...line }
+    delete nextLine.source_pr_line_id
+    return nextLine
+  })
+}
+
+function getLineSourcePrId(line) {
+  return normalizeNullableText(line?.source_pr_line_id || line?.pr_line_id)
+}
+
+function withPoLineSourceFallback(poLine = {}) {
+  const sourcePrLineId = getLineSourcePrId(poLine)
+
+  return {
+    ...poLine,
+    source_pr_line_id: sourcePrLineId,
+    pr_line_id: normalizeNullableText(poLine?.pr_line_id) || sourcePrLineId,
+  }
 }
 
 function tryParseJson(value) {
@@ -145,10 +186,14 @@ function withPoLineCurrencyFallback(poDraft) {
   }
 
   const nextLines = Array.isArray(poDraft.po_lines)
-    ? poDraft.po_lines.map((line) => ({
-        ...line,
-        currency: normalizeCurrency(line?.currency),
-      }))
+    ? poDraft.po_lines.map((line) => {
+        const normalizedLine = withPoLineSourceFallback(line)
+
+        return {
+          ...normalizedLine,
+          currency: normalizeCurrency(normalizedLine?.currency),
+        }
+      })
     : []
 
   return {
@@ -220,6 +265,11 @@ function withPoHeaderVarianceFallback(poDraft) {
     variance_submitted_at: normalizeNullableText(poDraft.variance_submitted_at),
     variance_submitted_by: normalizeNullableText(poDraft.variance_submitted_by),
     variance_checked_at: normalizeNullableText(poDraft.variance_checked_at),
+    variance_checked_by: normalizeNullableText(poDraft.variance_checked_by),
+    variance_checked_notes: normalizeNullableText(poDraft.variance_checked_notes),
+    variance_approved_at: normalizeNullableText(poDraft.variance_approved_at),
+    variance_approved_by: normalizeNullableText(poDraft.variance_approved_by),
+    variance_approval_notes: normalizeNullableText(poDraft.variance_approval_notes),
   }
 }
 
@@ -258,6 +308,53 @@ function coerceVarianceFieldsToText(payload = {}) {
   }
 
   return { payload: nextPayload, changed }
+}
+
+function buildPoLinePayloadVariants(lines = []) {
+  const variants = [
+    lines,
+    stripCurrencyFieldFromLines(lines),
+    stripSourcePrLineIdFieldFromLines(lines),
+    stripSourcePrLineIdFieldFromLines(stripCurrencyFieldFromLines(lines)),
+  ]
+
+  const dedupedVariants = []
+  const seenKeys = new Set()
+
+  variants.forEach((variant) => {
+    const variantKey = JSON.stringify(
+      variant.map((line) => Object.keys(line).sort()),
+    )
+
+    if (seenKeys.has(variantKey)) {
+      return
+    }
+
+    seenKeys.add(variantKey)
+    dedupedVariants.push(variant)
+  })
+
+  return dedupedVariants
+}
+
+async function writePoLinesWithFallback({ lines = [], writer }) {
+  const payloadVariants = buildPoLinePayloadVariants(lines)
+  let latestError = null
+
+  for (const payload of payloadVariants) {
+    const { error } = await writer(payload)
+
+    if (!error) {
+      return { error: null }
+    }
+
+    latestError = error
+    if (!isPoSchemaMismatchError(error)) {
+      return { error }
+    }
+  }
+
+  return { error: latestError }
 }
 
 async function runPoDraftDetailQuery(selectFn) {
@@ -413,6 +510,7 @@ function canCreatePoFromPrStatus(status) {
 
   return [
     PR_STATUSES.APPROVED,
+    PR_STATUSES.PARTIALLY_CONVERTED_TO_PO,
     PR_STATUSES.CONVERTED_TO_PO,
     'pending_variance_confirmation',
   ].includes(normalizedStatus)
@@ -455,6 +553,7 @@ function buildPoLinePayloadFromPrLines({ poId, prLines = [], preferredMap = new 
 
     return {
       po_id: poId,
+      source_pr_line_id: prLine.id || null,
       pr_line_id: prLine.id || null,
       item_id: prLine.item_id || null,
       sku: normalizeNullableText(prLine.sku),
@@ -464,7 +563,7 @@ function buildPoLinePayloadFromPrLines({ poId, prLines = [], preferredMap = new 
       requested_qty: requestedQty > 0 ? requestedQty : 1,
       ordered_qty: requestedQty > 0 ? requestedQty : 1,
       unit_price: unitPrice >= 0 ? unitPrice : 0,
-      currency: normalizeCurrency(preferred?.currency),
+      currency: PO_DEFAULT_CURRENCY,
       supplier_id: normalizeNullableText(preferred?.supplier_id),
       supplier_sku: normalizeNullableText(preferred?.supplier_sku),
       lead_time_days: normalizeNullableNumeric(preferred?.lead_time_days),
@@ -482,6 +581,34 @@ function stripTransientPoLineFields(lines = []) {
   })
 }
 
+function groupLinesBySupplier(lineEntries = []) {
+  return lineEntries.reduce((accumulator, entry) => {
+    const supplierId = normalizeNullableText(entry?.supplier_id)
+    if (!supplierId) {
+      return accumulator
+    }
+
+    if (!accumulator[supplierId]) {
+      accumulator[supplierId] = []
+    }
+
+    accumulator[supplierId].push(entry)
+    return accumulator
+  }, {})
+}
+
+function getPrConversionStatusFromCounts({ totalLineCount = 0, convertedLineCount = 0 }) {
+  if (!totalLineCount || convertedLineCount <= 0) {
+    return PR_STATUSES.APPROVED
+  }
+
+  if (convertedLineCount >= totalLineCount) {
+    return PR_STATUSES.CONVERTED_TO_PO
+  }
+
+  return PR_STATUSES.PARTIALLY_CONVERTED_TO_PO
+}
+
 export async function fetchPoDraftBySourcePrId(sourcePrId) {
   const normalizedSourcePrId = normalizeText(sourcePrId)
 
@@ -494,6 +621,8 @@ export async function fetchPoDraftBySourcePrId(sourcePrId) {
       .from(PO_TABLES.HEADERS)
       .select(selectClause)
       .eq('source_pr_id', normalizedSourcePrId)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle(),
   )
 }
@@ -521,10 +650,313 @@ export async function fetchPoDraftHeadersBySourcePrIds(sourcePrIds = []) {
 
   const { data, error } = await supabase
     .from(PO_TABLES.HEADERS)
-    .select('id, po_number, source_pr_id, status, created_at, updated_at')
+    .select(
+      'id, po_number, source_pr_id, supplier_id, supplier_name_snapshot, status, created_at, updated_at',
+    )
     .in('source_pr_id', normalizedPrIds)
 
   return { data: data || [], error }
+}
+
+export async function fetchPoDraftHeadersBySourcePrId(sourcePrId) {
+  const normalizedPrId = normalizeText(sourcePrId)
+
+  if (!normalizedPrId) {
+    return { data: [], error: new Error('Source PR ID is required.') }
+  }
+
+  const { data, error } = await supabase
+    .from(PO_TABLES.HEADERS)
+    .select('id, po_number, source_pr_id, supplier_id, supplier_name_snapshot, status, created_at, updated_at')
+    .eq('source_pr_id', normalizedPrId)
+    .order('created_at', { ascending: true })
+
+  return { data: data || [], error }
+}
+
+export async function generatePoDraftsBySupplier({
+  sourcePrId,
+  lineSelections = [],
+  actorRole = '',
+} = {}) {
+  const normalizedSourcePrId = normalizeText(sourcePrId)
+
+  if (!normalizedSourcePrId) {
+    return { data: null, error: new Error('Source PR ID is required.') }
+  }
+
+  if (!Array.isArray(lineSelections) || lineSelections.length === 0) {
+    return { data: null, error: new Error('At least one line selection is required.') }
+  }
+
+  const { data: user, error: userError } = await fetchCurrentUserIdentity()
+  if (userError) {
+    return { data: null, error: userError }
+  }
+
+  const { data: prRecord, error: prError } = await fetchPrDetailWithLines(normalizedSourcePrId)
+  if (prError || !prRecord?.id) {
+    return { data: null, error: prError || new Error('Source PR not found.') }
+  }
+
+  const normalizedPrStatus = normalizePrStatus(prRecord.status)
+  if (
+    ![PR_STATUSES.APPROVED, PR_STATUSES.PARTIALLY_CONVERTED_TO_PO, PR_STATUSES.CONVERTED_TO_PO].includes(
+      normalizedPrStatus,
+    )
+  ) {
+    return {
+      data: null,
+      error: new Error('PO generation is allowed only for approved or partially converted PRs.'),
+    }
+  }
+
+  const prLines = Array.isArray(prRecord.pr_lines) ? prRecord.pr_lines : []
+  if (!prLines.length) {
+    return { data: null, error: new Error('PR has no lines to convert.') }
+  }
+
+  const prLineById = prLines.reduce((accumulator, line) => {
+    if (line?.id) {
+      accumulator[line.id] = line
+    }
+    return accumulator
+  }, {})
+
+  const normalizedSelections = Array.from(
+    new Map(
+      lineSelections
+        .map((selection) => {
+          const prLineId = normalizeNullableText(selection?.pr_line_id)
+          const supplierId = normalizeNullableText(selection?.supplier_id)
+
+          if (!prLineId || !supplierId || !prLineById[prLineId]) {
+            return null
+          }
+
+          return [prLineId, { pr_line_id: prLineId, supplier_id: supplierId }]
+        })
+        .filter(Boolean),
+    ).values(),
+  )
+
+  if (!normalizedSelections.length) {
+    return {
+      data: null,
+      error: new Error('No valid line selections were provided for PO generation.'),
+    }
+  }
+
+  const supplierIds = Array.from(
+    new Set(normalizedSelections.map((selection) => selection.supplier_id).filter(Boolean)),
+  )
+
+  const { data: suppliers, error: suppliersError } = await supabase
+    .from('suppliers')
+    .select('id, supplier_name')
+    .in('id', supplierIds)
+
+  if (suppliersError) {
+    return { data: null, error: suppliersError }
+  }
+
+  const supplierNameById = (suppliers || []).reduce((accumulator, supplier) => {
+    if (supplier?.id) {
+      accumulator[supplier.id] = normalizeNullableText(supplier.supplier_name)
+    }
+    return accumulator
+  }, {})
+
+  const { data: existingHeaders, error: existingHeadersError } = await fetchPoDraftHeadersBySourcePrId(
+    normalizedSourcePrId,
+  )
+
+  if (existingHeadersError) {
+    return { data: null, error: existingHeadersError }
+  }
+
+  const headerBySupplierId = (existingHeaders || []).reduce((accumulator, header) => {
+    const supplierId = normalizeNullableText(header.supplier_id)
+    if (supplierId && !accumulator[supplierId]) {
+      accumulator[supplierId] = header
+    }
+    return accumulator
+  }, {})
+
+  const existingHeaderIds = (existingHeaders || [])
+    .map((header) => normalizeNullableText(header.id))
+    .filter(Boolean)
+
+  const { data: existingLines, error: existingLinesError } = existingHeaderIds.length
+    ? await supabase
+        .from(PO_TABLES.LINES)
+        .select('id, po_id, source_pr_line_id, pr_line_id')
+        .in('po_id', existingHeaderIds)
+    : { data: [], error: null }
+
+  if (existingLinesError) {
+    return { data: null, error: existingLinesError }
+  }
+
+  const convertedPrLineIds = new Set(
+    (existingLines || [])
+      .map((line) => getLineSourcePrId(line))
+      .filter(Boolean),
+  )
+
+  const linesToGenerate = normalizedSelections
+    .filter((selection) => !convertedPrLineIds.has(selection.pr_line_id))
+    .map((selection) => ({
+      supplier_id: selection.supplier_id,
+      prLine: prLineById[selection.pr_line_id],
+    }))
+    .filter((entry) => Boolean(entry.prLine))
+
+  if (!linesToGenerate.length) {
+    const totalLineCount = prLines.length
+    const convertedLineCount = convertedPrLineIds.size
+    const nextPrStatus = getPrConversionStatusFromCounts({ totalLineCount, convertedLineCount })
+
+    return {
+      data: {
+        po_headers: existingHeaders || [],
+        generated_count: 0,
+        skipped_count: normalizedSelections.length,
+        total_line_count: totalLineCount,
+        converted_line_count: convertedLineCount,
+        pr_status: nextPrStatus,
+      },
+      error: null,
+    }
+  }
+
+  const groupedBySupplier = groupLinesBySupplier(linesToGenerate)
+  const generatedHeaders = []
+
+  for (const [supplierId, supplierEntries] of Object.entries(groupedBySupplier)) {
+    let header = headerBySupplierId[supplierId] || null
+
+    if (!header) {
+      const headerPayload = {
+        source_pr_id: prRecord.id,
+        supplier_id: supplierId,
+        supplier_name_snapshot: supplierNameById[supplierId] || null,
+        department: normalizeNullableText(prRecord.department),
+        requester_name: normalizeText(prRecord.requester_name) || 'Requester',
+        purpose: normalizeNullableText(prRecord.purpose),
+        needed_by_date: normalizeNullableText(prRecord.needed_by_date),
+        status: PO_DEFAULT_STATUS,
+        notes: normalizeNullableText(prRecord.notes),
+        created_by_user_id: user.id,
+      }
+
+      const { data: createdHeader, error: createHeaderError } = await supabase
+        .from(PO_TABLES.HEADERS)
+        .insert(headerPayload)
+        .select('id, po_number, source_pr_id, supplier_id, supplier_name_snapshot, status, created_at, updated_at')
+        .single()
+
+      if (createHeaderError || !createdHeader?.id) {
+        return {
+          data: null,
+          error: createHeaderError || new Error('Failed to create PO header.'),
+        }
+      }
+
+      header = createdHeader
+      headerBySupplierId[supplierId] = createdHeader
+      generatedHeaders.push(createdHeader)
+    }
+
+    const linePayload = supplierEntries.map(({ prLine }) => {
+      const requestedQty = Number(prLine.requested_qty || 0)
+      const estimatedUnitPrice = Number(prLine.estimated_unit_price || 0)
+
+      return {
+        po_id: header.id,
+        source_pr_line_id: prLine.id,
+        pr_line_id: prLine.id,
+        item_id: normalizeNullableText(prLine.item_id),
+        sku: normalizeNullableText(prLine.sku),
+        item_name: normalizeText(prLine.item_name),
+        description: normalizeNullableText(prLine.description),
+        unit: normalizeText(prLine.unit),
+        requested_qty: requestedQty > 0 ? requestedQty : 1,
+        ordered_qty: requestedQty > 0 ? requestedQty : 1,
+        unit_price: !Number.isNaN(estimatedUnitPrice) && estimatedUnitPrice >= 0 ? estimatedUnitPrice : 0,
+        currency: PO_DEFAULT_CURRENCY,
+        supplier_id: supplierId,
+        supplier_sku: null,
+        lead_time_days: null,
+        remarks: normalizeNullableText(prLine.remarks),
+      }
+    })
+
+    const { error: insertLinesError } = await writePoLinesWithFallback({
+      lines: linePayload,
+      writer: (payload) => supabase.from(PO_TABLES.LINES).insert(payload),
+    })
+
+    if (insertLinesError) {
+      return { data: null, error: insertLinesError }
+    }
+
+    supplierEntries.forEach(({ prLine }) => {
+      if (prLine?.id) {
+        convertedPrLineIds.add(prLine.id)
+      }
+    })
+  }
+
+  const totalLineCount = prLines.length
+  const convertedLineCount = convertedPrLineIds.size
+  const nextPrStatus = getPrConversionStatusFromCounts({ totalLineCount, convertedLineCount })
+
+  if (PR_STATUS_LIST.includes(nextPrStatus) && normalizePrStatus(prRecord.status) !== nextPrStatus) {
+    const { error: updatePrStatusError } = await updatePrDraftHeader(prRecord.id, {
+      status: nextPrStatus,
+    })
+
+    if (updatePrStatusError) {
+      return { data: null, error: updatePrStatusError }
+    }
+  }
+
+  await createWorkflowHistoryEntry({
+    documentType: DOCUMENT_TYPES.PR,
+    documentId: prRecord.id,
+    action: WORKFLOW_ACTIONS.CREATE_PO_DRAFT,
+    actorUserId: user.id,
+    actorRole: normalizeNullableText(actorRole) || null,
+    comment: `Generated ${generatedHeaders.length} PO draft(s) by supplier.`,
+    metadata: {
+      generated_po_count: generatedHeaders.length,
+      converted_line_count: convertedLineCount,
+      total_line_count: totalLineCount,
+      pr_status: nextPrStatus,
+      supplier_ids: Object.keys(groupedBySupplier),
+    },
+  })
+
+  const { data: latestHeaders, error: latestHeadersError } = await fetchPoDraftHeadersBySourcePrId(
+    normalizedSourcePrId,
+  )
+
+  if (latestHeadersError) {
+    return { data: null, error: latestHeadersError }
+  }
+
+  return {
+    data: {
+      po_headers: latestHeaders || [],
+      generated_count: generatedHeaders.length,
+      skipped_count: normalizedSelections.length - linesToGenerate.length,
+      total_line_count: totalLineCount,
+      converted_line_count: convertedLineCount,
+      pr_status: nextPrStatus,
+    },
+    error: null,
+  }
 }
 
 export async function fetchVarianceConfirmationQueue({
@@ -688,6 +1120,35 @@ export async function createOrGetPoDraftFromPr(sourcePrId) {
     prLines,
     preferredMap,
   })
+
+  const distinctSupplierIds = Array.from(
+    new Set(
+      linePayloadWithSnapshot
+        .map((line) => normalizeNullableText(line.supplier_id))
+        .filter(Boolean),
+    ),
+  )
+
+  if (distinctSupplierIds.length > 1) {
+    return {
+      data: null,
+      created: false,
+      error: new Error(
+        'This PR contains multiple suppliers. Use "Generate POs by Supplier" from Procurement Queue.',
+      ),
+    }
+  }
+
+  if (distinctSupplierIds.length === 0) {
+    return {
+      data: null,
+      created: false,
+      error: new Error(
+        'No supplier is assigned for PR lines. Assign suppliers first, then generate POs by supplier.',
+      ),
+    }
+  }
+
   const { supplierId, supplierNameSnapshot } = deriveHeaderSupplierSnapshot(linePayloadWithSnapshot)
 
   const headerPayload = {
@@ -724,13 +1185,10 @@ export async function createOrGetPoDraftFromPr(sourcePrId) {
     })),
   )
 
-  let { error: lineInsertError } = await supabase.from(PO_TABLES.LINES).insert(linePayload)
-
-  if (lineInsertError && hasMissingCurrencyColumnError(lineInsertError)) {
-    const legacyLinePayload = stripCurrencyFieldFromLines(linePayload)
-    const legacyInsertResult = await supabase.from(PO_TABLES.LINES).insert(legacyLinePayload)
-    lineInsertError = legacyInsertResult.error
-  }
+  const { error: lineInsertError } = await writePoLinesWithFallback({
+    lines: linePayload,
+    writer: (payload) => supabase.from(PO_TABLES.LINES).insert(payload),
+  })
 
   if (lineInsertError) {
     await supabase.from(PO_TABLES.HEADERS).delete().eq('id', createdHeader.id)
@@ -803,6 +1261,36 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
     )
   }
 
+  if ('variance_checked_by' in headerUpdates) {
+    normalizedHeaderUpdates.variance_checked_by = normalizeNullableText(
+      headerUpdates.variance_checked_by,
+    )
+  }
+
+  if ('variance_checked_notes' in headerUpdates) {
+    normalizedHeaderUpdates.variance_checked_notes = normalizeNullableText(
+      headerUpdates.variance_checked_notes,
+    )
+  }
+
+  if ('variance_approved_at' in headerUpdates) {
+    normalizedHeaderUpdates.variance_approved_at = normalizeNullableText(
+      headerUpdates.variance_approved_at,
+    )
+  }
+
+  if ('variance_approved_by' in headerUpdates) {
+    normalizedHeaderUpdates.variance_approved_by = normalizeNullableText(
+      headerUpdates.variance_approved_by,
+    )
+  }
+
+  if ('variance_approval_notes' in headerUpdates) {
+    normalizedHeaderUpdates.variance_approval_notes = normalizeNullableText(
+      headerUpdates.variance_approval_notes,
+    )
+  }
+
   if (Object.keys(normalizedHeaderUpdates).length > 0) {
     const { error: headerError } = await updatePoHeaderWithFallback(
       normalizedPoId,
@@ -822,7 +1310,8 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
       return {
         id: normalizeNullableText(line.id),
         po_id: normalizedPoId,
-        pr_line_id: normalizeNullableText(line.pr_line_id),
+        source_pr_line_id: getLineSourcePrId(line),
+        pr_line_id: getLineSourcePrId(line),
         item_id: normalizeNullableText(line.item_id),
         sku: normalizeNullableText(line.sku),
         item_name: normalizeText(line.item_name),
@@ -831,7 +1320,7 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
         requested_qty: normalizeNullableNumeric(line.requested_qty) || 0,
         ordered_qty: orderedQty === null || orderedQty <= 0 ? 1 : orderedQty,
         unit_price: unitPrice === null || unitPrice < 0 ? 0 : unitPrice,
-        currency: normalizeCurrency(line.currency),
+        currency: PO_DEFAULT_CURRENCY,
         supplier_id: normalizeNullableText(line.supplier_id),
         supplier_sku: normalizeNullableText(line.supplier_sku),
         lead_time_days: normalizeNullableNumeric(line.lead_time_days),
@@ -839,17 +1328,11 @@ export async function savePoDraft(poId, { headerUpdates = {}, lines = [] } = {})
       }
     })
 
-    let { error: linesError } = await supabase
-      .from(PO_TABLES.LINES)
-      .upsert(linePayload, { onConflict: 'id' })
-
-    if (linesError && hasMissingCurrencyColumnError(linesError)) {
-      const legacyLinePayload = stripCurrencyFieldFromLines(linePayload)
-      const legacyUpsertResult = await supabase
-        .from(PO_TABLES.LINES)
-        .upsert(legacyLinePayload, { onConflict: 'id' })
-      linesError = legacyUpsertResult.error
-    }
+    const { error: linesError } = await writePoLinesWithFallback({
+      lines: linePayload,
+      writer: (payload) =>
+        supabase.from(PO_TABLES.LINES).upsert(payload, { onConflict: 'id' }),
+    })
 
     if (linesError) {
       return { data: null, error: linesError }
@@ -921,7 +1404,12 @@ export async function applyPoVarianceDecision({
       status: transition.toStatus,
       variance_summary: nextVarianceSummary,
       variance_checked_at: reviewedAt,
+      variance_checked_by: actorUserId || null,
+      variance_checked_notes: normalizedComment,
       variance_status: transition.varianceStatus,
+      variance_approved_at: transition.varianceStatus === 'confirmed' ? reviewedAt : null,
+      variance_approved_by: transition.varianceStatus === 'confirmed' ? actorUserId || null : null,
+      variance_approval_notes: transition.varianceStatus === 'confirmed' ? normalizedComment : null,
     },
   })
 

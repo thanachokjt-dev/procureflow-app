@@ -1,10 +1,28 @@
-export function formatCurrency(amount) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(Number(amount || 0))
+const DEFAULT_CURRENCY = 'THB'
+const DEFAULT_LOCALE = 'th-TH'
+
+export function formatCurrency(amount, currency = DEFAULT_CURRENCY, locale = DEFAULT_LOCALE) {
+  const normalizedCurrency = String(currency || DEFAULT_CURRENCY)
+    .trim()
+    .toUpperCase()
+
+  const numericAmount = Number(amount || 0)
+
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: normalizedCurrency || DEFAULT_CURRENCY,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(numericAmount)
+  } catch {
+    return new Intl.NumberFormat(DEFAULT_LOCALE, {
+      style: 'currency',
+      currency: DEFAULT_CURRENCY,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(numericAmount)
+  }
 }
 
 export function formatDate(dateValue) {

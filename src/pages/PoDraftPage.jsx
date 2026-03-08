@@ -5,7 +5,7 @@ import StatusBadge from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency, formatDate } from '../lib/formatters'
 import { fetchActiveSuppliers } from '../lib/masterData'
-import { createOrGetPoDraftFromPr, savePoDraft } from '../lib/po/poService'
+import { createOrGetPoDraftFromPr, fetchPoDraftDetail, savePoDraft } from '../lib/po/poService'
 import { fetchPrDetailWithLines } from '../lib/pr/prService'
 import { PO_DEFAULT_CURRENCY } from '../lib/po/poConstants'
 import { PO_STATUSES } from '../lib/workflow/constants'
@@ -45,9 +45,11 @@ function toNullableNumber(value) {
 }
 
 function mapPoLineToForm(line) {
+  const sourcePrLineId = line.source_pr_line_id || line.pr_line_id || ''
+
   return {
     id: line.id || '',
-    pr_line_id: line.pr_line_id || '',
+    pr_line_id: sourcePrLineId,
     item_id: line.item_id || '',
     sku: line.sku || '',
     item_name: line.item_name || '',
@@ -74,7 +76,7 @@ function PoDraftPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const { prId } = useParams()
+  const { prId, poId } = useParams()
   const [poDraft, setPoDraft] = useState(null)
   const [sourcePrDetail, setSourcePrDetail] = useState(null)
   const [lineItems, setLineItems] = useState([])
@@ -180,8 +182,11 @@ function PoDraftPage() {
   }
 
   const loadPoDraftContext = async () => {
-    if (!prId) {
-      setErrorMessage('PR ID is missing.')
+    const hasPrRoute = Boolean(prId)
+    const hasPoRoute = Boolean(poId)
+
+    if (!hasPrRoute && !hasPoRoute) {
+      setErrorMessage('PR/PO identifier is missing.')
       setLoading(false)
       return
     }
@@ -190,11 +195,38 @@ function PoDraftPage() {
     setErrorMessage('')
     setSuccessMessage('')
 
-    const [poResult, supplierResult, sourcePrResult] = await Promise.all([
-      createOrGetPoDraftFromPr(prId),
-      fetchActiveSuppliers(),
-      fetchPrDetailWithLines(prId),
-    ])
+    let poResult = { data: null, error: null, created: false }
+    let supplierResult = { data: [], error: null }
+    let sourcePrResult = { data: null, error: null }
+
+    if (hasPoRoute) {
+      const [poDetailResult, supplierFetchResult] = await Promise.all([
+        fetchPoDraftDetail(poId),
+        fetchActiveSuppliers(),
+      ])
+
+      poResult = {
+        data: poDetailResult.data,
+        error: poDetailResult.error,
+        created: false,
+      }
+      supplierResult = supplierFetchResult
+
+      const sourcePrId = poDetailResult.data?.source_pr_id
+      if (sourcePrId) {
+        sourcePrResult = await fetchPrDetailWithLines(sourcePrId)
+      }
+    } else {
+      const [createOrGetResult, supplierFetchResult, sourcePrFetchResult] = await Promise.all([
+        createOrGetPoDraftFromPr(prId),
+        fetchActiveSuppliers(),
+        fetchPrDetailWithLines(prId),
+      ])
+
+      poResult = createOrGetResult
+      supplierResult = supplierFetchResult
+      sourcePrResult = sourcePrFetchResult
+    }
 
     if (poResult.error) {
       setErrorMessage(poResult.error.message || 'Failed to load PO draft.')
@@ -256,7 +288,7 @@ function PoDraftPage() {
       isMounted = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prId])
+  }, [poId, prId])
 
   const handleSaveDraft = async () => {
     if (!poDraft?.id) {
@@ -298,9 +330,16 @@ function PoDraftPage() {
       variance_reasons: varianceResult.reasons,
       variance_summary: varianceMetadata,
       variance_checked_at: varianceSubmittedAt,
+      variance_checked_by: user?.id || null,
+      variance_checked_notes: varianceResult.hasVariance
+        ? 'Variance detected during PO draft save.'
+        : 'No material variance detected during PO draft save.',
       variance_status: varianceResult.hasVariance ? 'variance_detected' : 'no_variance',
       variance_submitted_at: varianceSubmittedAt,
       variance_submitted_by: user?.id || null,
+      variance_approved_at: null,
+      variance_approved_by: null,
+      variance_approval_notes: null,
     }
 
     const linePayload = lineItems.map((line) => ({
@@ -628,11 +667,8 @@ function PoDraftPage() {
                       <td className="px-3 py-3">
                         <input
                           value={line.currency}
-                          onChange={(event) =>
-                            handleLineFieldChange(line.id, 'currency', event.target.value)
-                          }
-                          className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm uppercase outline-none focus:border-slate-500"
-                          placeholder="THB"
+                          readOnly
+                          className="w-24 rounded-md border border-slate-300 bg-slate-100 px-2 py-1.5 text-sm uppercase text-slate-600"
                         />
                       </td>
                       <td className="px-3 py-3">

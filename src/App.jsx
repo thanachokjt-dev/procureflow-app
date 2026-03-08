@@ -83,6 +83,14 @@ function App() {
             }
           />
           <Route
+            path="/po-draft/by-id/:poId"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.PO_DRAFT]}>
+                <PoDraftPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/supplier-master"
             element={
               <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.SUPPLIER_MASTER]}>

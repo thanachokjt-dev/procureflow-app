@@ -87,6 +87,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/po_phase6d_variance_confirmation.sql`
    - `supabase/po_phase6e_currency_fix.sql`
    - `supabase/po_phase6f_po_headers_variance_fix.sql`
+   - `supabase/po_phase6g_multi_po_by_supplier.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -114,6 +115,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/po_phase6d_variance_confirmation.sql`
    - `supabase/po_phase6e_currency_fix.sql`
    - `supabase/po_phase6f_po_headers_variance_fix.sql`
+   - `supabase/po_phase6g_multi_po_by_supplier.sql`
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -258,4 +260,5 @@ supabase/
   po_phase6d_variance_confirmation.sql
   po_phase6e_currency_fix.sql
   po_phase6f_po_headers_variance_fix.sql
+  po_phase6g_multi_po_by_supplier.sql
 ```

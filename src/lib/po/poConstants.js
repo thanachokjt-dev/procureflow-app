@@ -32,6 +32,11 @@ const PO_HEADER_VARIANCE_FIELDS = [
   'variance_submitted_at',
   'variance_submitted_by',
   'variance_checked_at',
+  'variance_checked_by',
+  'variance_checked_notes',
+  'variance_approved_at',
+  'variance_approved_by',
+  'variance_approval_notes',
 ]
 
 export const PO_HEADER_SELECT = [...PO_HEADER_BASE_FIELDS, ...PO_HEADER_VARIANCE_FIELDS].join(
@@ -42,6 +47,7 @@ export const PO_HEADER_SELECT_LEGACY = PO_HEADER_BASE_FIELDS.join(',\n  ')
 export const PO_LINE_SELECT = `
   id,
   po_id,
+  source_pr_line_id,
   pr_line_id,
   item_id,
   sku,

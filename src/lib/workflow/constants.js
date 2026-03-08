@@ -35,6 +35,7 @@ export const PR_STATUSES = {
   SUBMITTED: 'submitted',
   APPROVED: 'approved',
   REJECTED: 'rejected',
+  PARTIALLY_CONVERTED_TO_PO: 'partially_converted_to_po',
   CONVERTED_TO_PO: 'converted_to_po',
   CLOSED: 'closed',
 }
@@ -48,6 +49,7 @@ export const PR_STATUS_LIST = [
   PR_STATUSES.SUBMITTED,
   PR_STATUSES.APPROVED,
   PR_STATUSES.REJECTED,
+  PR_STATUSES.PARTIALLY_CONVERTED_TO_PO,
   PR_STATUSES.CONVERTED_TO_PO,
   PR_STATUSES.CLOSED,
 ]
