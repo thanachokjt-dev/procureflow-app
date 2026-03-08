@@ -354,3 +354,36 @@ export async function fetchPreferredSupplierSnapshots(itemIds = []) {
 
   return { data: allRows, error: null }
 }
+
+export async function fetchPreferredSupplierMappings(itemIds = []) {
+  const normalizedItemIds = Array.from(
+    new Set(itemIds.map((itemId) => String(itemId || '').trim()).filter(Boolean)),
+  )
+
+  if (!normalizedItemIds.length) {
+    return { data: [], error: null }
+  }
+
+  const batchSize = 500
+  const allRows = []
+
+  for (let index = 0; index < normalizedItemIds.length; index += batchSize) {
+    const batch = normalizedItemIds.slice(index, index + batchSize)
+    const { data, error } = await supabase
+      .from('item_supplier_map')
+      .select(
+        'id, item_id, supplier_id, supplier_sku, unit_price, currency, lead_time_days, last_price_date, suppliers(id, supplier_code, supplier_name)',
+      )
+      .in('item_id', batch)
+      .eq('is_preferred', true)
+      .eq('active', true)
+
+    if (error) {
+      return { data: null, error }
+    }
+
+    allRows.push(...(data || []))
+  }
+
+  return { data: allRows, error: null }
+}

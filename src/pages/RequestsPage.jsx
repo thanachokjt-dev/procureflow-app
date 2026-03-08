@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
+import { useAuth } from '../context/AuthContext'
 import { formatCurrency, formatDate } from '../lib/formatters'
 import { fetchPrListWithLineSummary } from '../lib/pr/prService'
 import { PR_STATUS_LIST, PR_STATUSES } from '../lib/workflow/constants'
@@ -19,6 +20,7 @@ function calculateEstimatedTotal(lines = []) {
 }
 
 function RequestsPage() {
+  const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [records, setRecords] = useState([])
@@ -159,7 +161,7 @@ function RequestsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Requests"
-        subtitle="View saved PR drafts and submitted PRs. Open drafts to continue editing."
+        subtitle="View your PRs and role-visible workflow records. Open drafts to continue editing."
       />
 
       {flashMessage ? (
@@ -279,6 +281,8 @@ function RequestsPage() {
             {!loading
               ? filteredRecords.map((item) => {
                   const isDraft = item.status === PR_STATUSES.DRAFT
+                  const isOwner = item.requester_user_id === user?.id
+                  const actionLabel = isDraft && isOwner ? 'Continue Draft' : 'View'
 
                   return (
                     <tr key={item.id} className="border-b border-slate-100 last:border-0">
@@ -301,7 +305,7 @@ function RequestsPage() {
                           onClick={() => handleOpenPr(item.id)}
                           className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                         >
-                          {isDraft ? 'Continue Draft' : 'Open'}
+                          {actionLabel}
                         </button>
                       </td>
                     </tr>

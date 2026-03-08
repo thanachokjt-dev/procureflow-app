@@ -9,8 +9,11 @@ import DashboardPage from './pages/DashboardPage'
 import ItemMasterPage from './pages/ItemMasterPage'
 import LoginPage from './pages/LoginPage'
 import ManagerApprovalPage from './pages/ManagerApprovalPage'
+import PoDraftPage from './pages/PoDraftPage'
+import ProcurementQueuePage from './pages/ProcurementQueuePage'
 import RequestsPage from './pages/RequestsPage'
 import SupplierMasterPage from './pages/SupplierMasterPage'
+import VarianceConfirmationPage from './pages/VarianceConfirmationPage'
 import WorkflowDebugPage from './pages/WorkflowDebugPage'
 
 function FallbackRedirect() {
@@ -40,7 +43,7 @@ function App() {
           <Route
             path="/create-pr/:prId"
             element={
-              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST]}>
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.REQUESTS]}>
                 <CreatePrPage />
               </ProtectedRoute>
             }
@@ -52,6 +55,30 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.MANAGER_APPROVAL]}>
                 <ManagerApprovalPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/variance-confirmation"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.VARIANCE_CONFIRMATION]}>
+                <VarianceConfirmationPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/procurement-queue"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.PROCUREMENT_QUEUE]}>
+                <ProcurementQueuePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/po-draft/:prId"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.PO_DRAFT]}>
+                <PoDraftPage />
               </ProtectedRoute>
             }
           />

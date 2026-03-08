@@ -1,5 +1,11 @@
 import { supabase } from '../supabaseClient'
-import { DOCUMENT_TYPES, PR_STATUSES, PR_STATUS_LIST, WORKFLOW_ACTIONS } from '../workflow/constants'
+import {
+  APPROVAL_ACTIONS,
+  DOCUMENT_TYPES,
+  PR_STATUSES,
+  PR_STATUS_LIST,
+  WORKFLOW_ACTIONS,
+} from '../workflow/constants'
 import { createWorkflowHistoryEntry } from '../workflow/historyService'
 import { normalizePrStatus } from '../workflow/statusHelpers'
 import {
@@ -195,11 +201,19 @@ export async function fetchPrList({
 
 export async function fetchPrListWithLineSummary({
   status = '',
+  statusList = null,
+  department = '',
   searchTerm = '',
   limit = 200,
   order = 'desc',
 } = {}) {
   const normalizedStatus = normalizeStatusForSave(status, '')
+  const normalizedStatusList = Array.isArray(statusList)
+    ? statusList
+        .map((entry) => normalizePrStatus(entry))
+        .filter(Boolean)
+    : []
+  const normalizedDepartment = normalizeText(department)
   const normalizedSearch = normalizeText(searchTerm)
   const normalizedLimit = Number(limit)
   const ascending = order === 'asc'
@@ -220,8 +234,14 @@ export async function fetchPrListWithLineSummary({
     .order('created_at', { ascending })
     .limit(Number.isInteger(normalizedLimit) && normalizedLimit > 0 ? normalizedLimit : 200)
 
-  if (normalizedStatus) {
+  if (normalizedStatusList.length > 0) {
+    query = query.in('status', normalizedStatusList)
+  } else if (normalizedStatus) {
     query = query.eq('status', normalizedStatus)
+  }
+
+  if (normalizedDepartment) {
+    query = query.eq('department', normalizedDepartment)
   }
 
   if (normalizedSearch) {
@@ -246,6 +266,38 @@ export async function fetchVisiblePrRecords({ limit = 300, order = 'desc' } = {}
 export async function fetchPendingPrApprovals({ limit = 300, order = 'asc' } = {}) {
   return fetchPrListWithLineSummary({
     status: PR_STATUSES.SUBMITTED,
+    limit,
+    order,
+  })
+}
+
+export async function fetchManagerApprovalQueue({
+  statuses = null,
+  searchTerm = '',
+  department = '',
+  limit = 300,
+  order = 'asc',
+} = {}) {
+  return fetchPrListWithLineSummary({
+    statusList: statuses,
+    searchTerm,
+    department,
+    limit,
+    order,
+  })
+}
+
+export async function fetchProcurementQueue({
+  statuses = [PR_STATUSES.APPROVED, 'pending_variance_confirmation', PR_STATUSES.CONVERTED_TO_PO, PR_STATUSES.CLOSED],
+  searchTerm = '',
+  department = '',
+  limit = 300,
+  order = 'asc',
+} = {}) {
+  return fetchPrListWithLineSummary({
+    statusList: statuses,
+    searchTerm,
+    department,
     limit,
     order,
   })
@@ -375,15 +427,15 @@ export async function setPrDecision({
 }) {
   const normalizedStatus = normalizePrStatus(status)
 
-  if (![PR_STATUSES.APPROVED, PR_STATUSES.REJECTED].includes(normalizedStatus)) {
-    return { data: null, error: new Error('Status must be approved or rejected.') }
+  if (![PR_STATUSES.APPROVED, PR_STATUSES.REJECTED, PR_STATUSES.DRAFT].includes(normalizedStatus)) {
+    return { data: null, error: new Error('Status must be approved, rejected, or draft (send back).') }
   }
 
   const comment = String(managerComment || '').trim()
   if (!comment) {
     return {
       data: null,
-      error: new Error('Manager comment is required when approving or rejecting.'),
+      error: new Error('Manager comment is required when taking review action.'),
     }
   }
 
@@ -396,10 +448,13 @@ export async function setPrDecision({
   }
 
   if (actorUserId) {
-    const action =
-      normalizedStatus === PR_STATUSES.APPROVED
-        ? WORKFLOW_ACTIONS.APPROVE_PR
-        : WORKFLOW_ACTIONS.REJECT_PR
+    let action = WORKFLOW_ACTIONS.APPROVE_PR
+
+    if (normalizedStatus === PR_STATUSES.REJECTED) {
+      action = WORKFLOW_ACTIONS.REJECT_PR
+    } else if (normalizedStatus === PR_STATUSES.DRAFT) {
+      action = APPROVAL_ACTIONS.SEND_BACK
+    }
 
     await appendPrWorkflowHistory({
       prId: updatedHeader.id,

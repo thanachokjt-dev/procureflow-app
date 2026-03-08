@@ -14,8 +14,8 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - Sign in / sign out with session persistence
 - Protected routes (`/login` only for unauthenticated users)
 - Role-based route and sidebar menu visibility
-- Requester can create requests and view only their own requests
-- Manager can view pending requests and approve/reject
+- Any authenticated user can create/save/submit their own PRs and view their own PR records
+- Manager can view submitted PRs and approve/reject
 - Admin can access everything
 - Optional internal Workflow Debug page for Procurement/Admin
 - Reusable workflow history timeline (`pr` / `po`) for internal tracking
@@ -29,6 +29,11 @@ ProcureFlow is a beginner-friendly internal procurement app with:
 - New Request supports multiple line items
 - New Request uses Supplier Master + Item Master selections
 - Active PR flow uses `pr_headers` + `pr_lines` (legacy request flow is not routed in UI)
+- Manager Approval queue uses submitted PRs from `pr_headers` with RLS-safe visibility
+- Procurement Queue shows approved PRs for sourcing and PO draft handoff
+- PO Draft can be started/continued from approved PRs with supplier-prefill defaults
+- PO Draft includes PR-vs-PO variance checks with threshold-based status routing
+- Variance Confirmation queue lets Manager/Admin confirm, reject, or send back variance PO drafts
 
 ## Tech Stack
 - React (Vite)
@@ -72,6 +77,14 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/pr_phase4b_submit_policy.sql`
    - `supabase/pr_phase4_patch_rls.sql`
    - `supabase/pr_phase4c_pr_number_fix.sql`
+   - `supabase/pr_phase5a_manager_queue_rls.sql`
+   - `supabase/pr_phase5b_all_authenticated_pr_creation.sql`
+   - `supabase/pr_phase5c_manager_review_actions.sql`
+   - `supabase/workflow_history_phase5b_requester_visibility.sql`
+   - `supabase/master_data_phase6b_procurement_read.sql`
+   - `supabase/po_phase6b_schema.sql`
+   - `supabase/po_phase6c_variance.sql`
+   - `supabase/po_phase6d_variance_confirmation.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -89,6 +102,14 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/pr_phase4b_submit_policy.sql`
    - `supabase/pr_phase4_patch_rls.sql`
    - `supabase/pr_phase4c_pr_number_fix.sql`
+   - `supabase/pr_phase5a_manager_queue_rls.sql`
+   - `supabase/pr_phase5b_all_authenticated_pr_creation.sql`
+   - `supabase/pr_phase5c_manager_review_actions.sql`
+   - `supabase/workflow_history_phase5b_requester_visibility.sql`
+   - `supabase/master_data_phase6b_procurement_read.sql`
+   - `supabase/po_phase6b_schema.sql`
+   - `supabase/po_phase6c_variance.sql`
+   - `supabase/po_phase6d_variance_confirmation.sql`
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -186,6 +207,9 @@ src/
       prConstants.js
       prNumbering.js
       prService.js
+    po/
+      poConstants.js
+      poService.js
     workflow/
       constants.js
       guardHelpers.js
@@ -201,6 +225,9 @@ src/
     NewRequestPage.jsx
     RequestsPage.jsx
     ManagerApprovalPage.jsx
+    VarianceConfirmationPage.jsx
+    ProcurementQueuePage.jsx
+    PoDraftPage.jsx
     SupplierMasterPage.jsx
     ItemMasterPage.jsx
     WorkflowDebugPage.jsx
@@ -213,8 +240,16 @@ supabase/
   master_data_phase1.sql
   master_data_phase2.sql
   workflow_history_phase3b.sql
+  workflow_history_phase5b_requester_visibility.sql
   pr_phase4a.sql
   pr_phase4b_submit_policy.sql
   pr_phase4_patch_rls.sql
   pr_phase4c_pr_number_fix.sql
+  pr_phase5a_manager_queue_rls.sql
+  pr_phase5b_all_authenticated_pr_creation.sql
+  pr_phase5c_manager_review_actions.sql
+  master_data_phase6b_procurement_read.sql
+  po_phase6b_schema.sql
+  po_phase6c_variance.sql
+  po_phase6d_variance_confirmation.sql
 ```

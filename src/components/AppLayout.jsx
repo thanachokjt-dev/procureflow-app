@@ -26,6 +26,16 @@ const navItems = [
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.MANAGER_APPROVAL],
   },
   {
+    to: '/variance-confirmation',
+    label: 'Variance Confirmation',
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.VARIANCE_CONFIRMATION],
+  },
+  {
+    to: '/procurement-queue',
+    label: 'Procurement Queue',
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.PROCUREMENT_QUEUE],
+  },
+  {
     to: '/supplier-master',
     label: 'Supplier Master',
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.SUPPLIER_MASTER],

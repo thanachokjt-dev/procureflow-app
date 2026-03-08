@@ -10,6 +10,9 @@ const PAGE_LAYOUT_BY_PATH = {
   '/new-request': PAGE_LAYOUT_MODES.FORM_FOCUSED,
   '/create-pr': PAGE_LAYOUT_MODES.FORM_FOCUSED,
   '/manager-approval': PAGE_LAYOUT_MODES.TABLE_FIRST,
+  '/variance-confirmation': PAGE_LAYOUT_MODES.TABLE_FIRST,
+  '/procurement-queue': PAGE_LAYOUT_MODES.TABLE_FIRST,
+  '/po-draft': PAGE_LAYOUT_MODES.OPERATIONS_DENSE,
   '/requests': PAGE_LAYOUT_MODES.TABLE_FIRST,
   '/supplier-master': PAGE_LAYOUT_MODES.OPERATIONS_DENSE,
   '/item-master': PAGE_LAYOUT_MODES.OPERATIONS_DENSE,
@@ -55,6 +58,10 @@ export function getPageLayoutMode({ pathname = '/', role = '' } = {}) {
 
   if (pathname.startsWith('/create-pr/') || pathname.startsWith('/new-request/')) {
     return PAGE_LAYOUT_MODES.FORM_FOCUSED
+  }
+
+  if (pathname.startsWith('/po-draft/')) {
+    return PAGE_LAYOUT_MODES.OPERATIONS_DENSE
   }
 
   const normalizedRole = normalizeRole(role)

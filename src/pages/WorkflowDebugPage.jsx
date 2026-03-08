@@ -470,8 +470,8 @@ function WorkflowDebugPage() {
 
           <p className="text-sm text-slate-600">
             Creates an empty PR draft in <code>pr_headers</code> with default status{' '}
-            <code>draft</code>. This follows RLS, so <code>requester</code>/<code>staff</code> or{' '}
-            <code>admin</code> can create.
+            <code>draft</code>. This follows RLS, so any authenticated user can create their own
+            draft PR, and <code>admin</code> can create as well.
           </p>
 
           {prDraftError ? (

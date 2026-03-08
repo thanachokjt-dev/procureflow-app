@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
+import WorkflowTimeline from '../components/WorkflowTimeline'
 import { PrLinesCardEditor, PrLinesTableEditor } from '../components/pr/PrLinesEditors'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
 import { fetchActiveItems } from '../lib/masterData'
-import { PR_STATUSES, WORKFLOW_ACTIONS } from '../lib/workflow/constants'
-import { normalizePrStatus } from '../lib/workflow/statusHelpers'
+import { hasAnyRole, ROLES } from '../lib/roles'
+import { APPROVAL_ACTIONS, DOCUMENT_TYPES, PR_STATUSES, WORKFLOW_ACTIONS } from '../lib/workflow/constants'
+import { fetchWorkflowHistoryEntries } from '../lib/workflow/historyService'
+import { getPrStatusLabel, normalizePrStatus } from '../lib/workflow/statusHelpers'
 import {
   appendPrWorkflowHistory,
   createPrDraft,
+  setPrDecision,
   fetchPrDetailWithLines,
   deletePrLine,
   savePrLines,
@@ -96,9 +100,18 @@ function CreatePrPage() {
   const [activeDraftId, setActiveDraftId] = useState('')
   const [activeDraftNumber, setActiveDraftNumber] = useState('')
   const [activeDraftStatus, setActiveDraftStatus] = useState(PR_STATUSES.DRAFT)
+  const [activeRequesterName, setActiveRequesterName] = useState('')
+  const [activeRequesterUserId, setActiveRequesterUserId] = useState('')
   const [pendingDeleteLineIds, setPendingDeleteLineIds] = useState([])
   const minNeededByDate = useMemo(() => getLocalDatePlusDaysIso(7), [])
   const [isLoadingDraft, setIsLoadingDraft] = useState(false)
+  const [reviewComment, setReviewComment] = useState('')
+  const [reviewActionLoading, setReviewActionLoading] = useState(false)
+  const [reviewActionError, setReviewActionError] = useState('')
+  const [reviewActionSuccess, setReviewActionSuccess] = useState('')
+  const [workflowHistoryEntries, setWorkflowHistoryEntries] = useState([])
+  const [workflowHistoryLoading, setWorkflowHistoryLoading] = useState(false)
+  const [workflowHistoryError, setWorkflowHistoryError] = useState('')
 
   useEffect(() => {
     const loadItems = async () => {
@@ -124,10 +137,25 @@ function CreatePrPage() {
   const documentEstimatedTotal = useMemo(() => {
     return lineItems.reduce((total, line) => total + getLineEstimatedTotal(line), 0)
   }, [lineItems])
-  const isReadOnlyMode = Boolean(prId) && normalizePrStatus(activeDraftStatus) !== PR_STATUSES.DRAFT
-  const pageTitle = prId ? (isReadOnlyMode ? 'PR Details' : 'Edit PR Draft') : 'Create PR'
+  const normalizedActiveStatus = normalizePrStatus(activeDraftStatus)
+  const isManagerReviewer = hasAnyRole(role, [ROLES.MANAGER, ROLES.ADMIN])
+  const canEditDraft =
+    !prId ||
+    (normalizedActiveStatus === PR_STATUSES.DRAFT &&
+      (activeRequesterUserId === user?.id || role === ROLES.ADMIN))
+  const isReadOnlyMode = Boolean(prId) && !canEditDraft
+  const canReviewPr = Boolean(prId) && isManagerReviewer && normalizedActiveStatus === PR_STATUSES.SUBMITTED
+  const pageTitle = prId
+    ? canReviewPr
+      ? 'PR Review'
+      : isReadOnlyMode
+        ? 'PR Details'
+        : 'Edit PR Draft'
+    : 'Create PR'
   const pageSubtitle = prId
-    ? 'Open an existing PR record. Drafts are editable, submitted PRs are read-only.'
+    ? canReviewPr
+      ? 'Review submitted PR details and take approval action with a required comment.'
+      : 'Open an existing PR record. Owner drafts are editable and reviewed PRs are read-only.'
     : 'Create a purchase request draft, then submit it for manager approval.'
 
   const handleHeaderChange = (fieldName) => (event) => {
@@ -231,7 +259,12 @@ function CreatePrPage() {
     setActiveDraftId('')
     setActiveDraftNumber('')
     setActiveDraftStatus(PR_STATUSES.DRAFT)
+    setActiveRequesterName('')
+    setActiveRequesterUserId('')
     setPendingDeleteLineIds([])
+    setWorkflowHistoryEntries([])
+    setWorkflowHistoryError('')
+    setWorkflowHistoryLoading(false)
   }
 
   const validateForm = () => {
@@ -284,6 +317,56 @@ function CreatePrPage() {
     return errors
   }
 
+  const loadWorkflowHistory = async (targetPrId) => {
+    if (!targetPrId) {
+      setWorkflowHistoryEntries([])
+      setWorkflowHistoryError('')
+      setWorkflowHistoryLoading(false)
+      return
+    }
+
+    setWorkflowHistoryLoading(true)
+    setWorkflowHistoryError('')
+
+    const { data, error } = await fetchWorkflowHistoryEntries({
+      documentType: DOCUMENT_TYPES.PR,
+      documentId: targetPrId,
+      order: 'desc',
+    })
+
+    if (error) {
+      setWorkflowHistoryEntries([])
+      setWorkflowHistoryError(error.message || 'Failed to load workflow history.')
+      setWorkflowHistoryLoading(false)
+      return
+    }
+
+    setWorkflowHistoryEntries(data || [])
+    setWorkflowHistoryLoading(false)
+  }
+
+  const applyLoadedPrData = (data) => {
+    const normalizedStatus = normalizePrStatus(data.status || PR_STATUSES.DRAFT)
+    const loadedLines =
+      Array.isArray(data.pr_lines) && data.pr_lines.length > 0
+        ? data.pr_lines.map(mapSavedLineToFormLine)
+        : [createLineDraft()]
+
+    setFormValues({
+      department: data.department || '',
+      purpose: data.purpose || '',
+      needed_by_date: data.needed_by_date || '',
+      notes: data.notes || '',
+    })
+    setLineItems(loadedLines)
+    setActiveDraftId(data.id)
+    setActiveDraftNumber(data.pr_number || '')
+    setActiveDraftStatus(normalizedStatus)
+    setActiveRequesterName(data.requester_name || '')
+    setActiveRequesterUserId(data.requester_user_id || '')
+    setPendingDeleteLineIds([])
+  }
+
   const handleSaveDraft = async (event) => {
     event.preventDefault()
     await persistPr({ submitAfterSave: false })
@@ -299,6 +382,9 @@ function CreatePrPage() {
       setSaveError('')
       setSaveSuccess('')
       setValidationErrors([])
+      setReviewComment('')
+      setReviewActionError('')
+      setReviewActionSuccess('')
 
       const { data, error } = await fetchPrDetailWithLines(prId)
 
@@ -308,23 +394,8 @@ function CreatePrPage() {
         return
       }
 
-      const normalizedStatus = normalizePrStatus(data.status || PR_STATUSES.DRAFT)
-      const loadedLines =
-        Array.isArray(data.pr_lines) && data.pr_lines.length > 0
-          ? data.pr_lines.map(mapSavedLineToFormLine)
-          : [createLineDraft()]
-
-      setFormValues({
-        department: data.department || '',
-        purpose: data.purpose || '',
-        needed_by_date: data.needed_by_date || '',
-        notes: data.notes || '',
-      })
-      setLineItems(loadedLines)
-      setActiveDraftId(data.id)
-      setActiveDraftNumber(data.pr_number || '')
-      setActiveDraftStatus(normalizedStatus)
-      setPendingDeleteLineIds([])
+      applyLoadedPrData(data)
+      await loadWorkflowHistory(data.id)
       setIsLoadingDraft(false)
     }
 
@@ -337,7 +408,7 @@ function CreatePrPage() {
     setLastSavedDraft(null)
 
     if (isReadOnlyMode) {
-      setSaveError('This PR is already submitted and is no longer editable.')
+      setSaveError('This PR is not editable for your account in its current status.')
       return
     }
 
@@ -449,7 +520,7 @@ function CreatePrPage() {
         action: WORKFLOW_ACTIONS.SUBMIT_PR,
         actorUserId: user?.id,
         actorRole: role,
-        comment: 'PR submitted by requester',
+        comment: 'PR submitted by owner',
         metadata: { source: 'new_request_page', status: PR_STATUSES.SUBMITTED },
       })
 
@@ -477,6 +548,8 @@ function CreatePrPage() {
       setActiveDraftId('')
       setActiveDraftNumber('')
       setActiveDraftStatus(PR_STATUSES.DRAFT)
+      setActiveRequesterName('')
+      setActiveRequesterUserId('')
       setIsSaving(false)
       setIsSubmittingPr(false)
 
@@ -499,6 +572,8 @@ function CreatePrPage() {
     setActiveDraftId(draftHeader.id)
     setActiveDraftNumber(draftHeader.pr_number || '')
     setActiveDraftStatus(PR_STATUSES.DRAFT)
+    setActiveRequesterName(draftHeader.requester_name || activeRequesterName || profile?.full_name || '')
+    setActiveRequesterUserId(draftHeader.requester_user_id || user?.id || '')
     setLineItems((savedLines || []).map(mapSavedLineToFormLine))
     setPendingDeleteLineIds([])
     setValidationErrors([])
@@ -524,6 +599,71 @@ function CreatePrPage() {
     await persistPr({ submitAfterSave: true })
   }
 
+  const handleManagerReviewAction = async (actionName) => {
+    if (!prId) {
+      return
+    }
+
+    const comment = String(reviewComment || '').trim()
+    if (!comment) {
+      setReviewActionError('Manager comment is required before taking review action.')
+      setReviewActionSuccess('')
+      return
+    }
+
+    let targetStatus = PR_STATUSES.APPROVED
+    let successMessage = 'PR approved successfully.'
+
+    if (actionName === 'reject') {
+      targetStatus = PR_STATUSES.REJECTED
+      successMessage = 'PR rejected successfully.'
+    } else if (actionName === 'send_back') {
+      targetStatus = PR_STATUSES.DRAFT
+      successMessage = 'PR sent back to draft successfully.'
+    }
+
+    setReviewActionLoading(true)
+    setReviewActionError('')
+    setReviewActionSuccess('')
+
+    const { error: actionError } = await setPrDecision({
+      prId,
+      status: targetStatus,
+      managerComment: comment,
+      actorUserId: user?.id,
+      actorRole: role,
+    })
+
+    if (actionError) {
+      setReviewActionError(actionError.message || 'Failed to update PR review action.')
+      setReviewActionLoading(false)
+      return
+    }
+
+    if (targetStatus === PR_STATUSES.DRAFT && role === ROLES.MANAGER) {
+      setReviewActionLoading(false)
+      navigate('/manager-approval', {
+        state: { flashMessage: 'PR sent back to draft for requester revision.' },
+      })
+      return
+    }
+
+    const { data: refreshedPr, error: refreshError } = await fetchPrDetailWithLines(prId)
+    if (refreshError || !refreshedPr?.id) {
+      setReviewActionError(
+        refreshError?.message || 'Action saved, but failed to refresh PR details.',
+      )
+      setReviewActionLoading(false)
+      return
+    }
+
+    applyLoadedPrData(refreshedPr)
+    await loadWorkflowHistory(refreshedPr.id)
+    setReviewComment('')
+    setReviewActionSuccess(successMessage)
+    setReviewActionLoading(false)
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -537,9 +677,30 @@ function CreatePrPage() {
         </div>
       ) : null}
 
-      {isReadOnlyMode ? (
+      {Boolean(prId) && normalizedActiveStatus === PR_STATUSES.APPROVED ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          This PR is approved and read-only. Use workflow history for the approval comment.
+        </div>
+      ) : null}
+
+      {Boolean(prId) && normalizedActiveStatus === PR_STATUSES.REJECTED ? (
+        <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          This PR is rejected. Open workflow history below to review manager comments.
+        </div>
+      ) : null}
+
+      {isReadOnlyMode && normalizedActiveStatus === PR_STATUSES.DRAFT ? (
         <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-700">
-          This PR is submitted and shown in read-only mode.
+          This PR is draft, but only the owner can edit it.
+        </div>
+      ) : null}
+
+      {isReadOnlyMode &&
+      normalizedActiveStatus !== PR_STATUSES.DRAFT &&
+      normalizedActiveStatus !== PR_STATUSES.APPROVED &&
+      normalizedActiveStatus !== PR_STATUSES.REJECTED ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-700">
+          This PR is shown in read-only mode.
         </div>
       ) : null}
 
@@ -572,6 +733,18 @@ function CreatePrPage() {
         </div>
       ) : null}
 
+      {reviewActionError ? (
+        <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
+          {reviewActionError}
+        </div>
+      ) : null}
+
+      {reviewActionSuccess ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          {reviewActionSuccess}
+        </div>
+      ) : null}
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <form
           onSubmit={handleSaveDraft}
@@ -580,6 +753,84 @@ function CreatePrPage() {
           {activeDraftNumber ? (
             <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
               Editing Draft: <span className="font-semibold">{activeDraftNumber}</span>
+            </div>
+          ) : null}
+
+          {prId ? (
+            <div className="grid gap-3 rounded-md border border-slate-200 bg-white p-3 text-sm text-slate-700 md:grid-cols-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">PR Number</p>
+                <p className="mt-1 font-medium text-slate-900">{activeDraftNumber || '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Requester</p>
+                <p className="mt-1 font-medium text-slate-900">{activeRequesterName || '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Status</p>
+                <p className="mt-1 font-medium text-slate-900">
+                  {normalizedActiveStatus ? getPrStatusLabel(normalizedActiveStatus) : '-'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Needed By</p>
+                <p className="mt-1 font-medium text-slate-900">{formValues.needed_by_date || '-'}</p>
+              </div>
+            </div>
+          ) : null}
+
+          {isManagerReviewer && prId ? (
+            <div className="space-y-3 rounded-md border border-slate-200 bg-white p-3">
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                  Manager Review
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Add a comment, then approve, reject, or send this PR back to draft.
+                </p>
+              </div>
+
+              <textarea
+                rows={3}
+                value={reviewComment}
+                onChange={(event) => setReviewComment(event.target.value)}
+                placeholder="Enter manager review comment..."
+                className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                disabled={!canReviewPr || reviewActionLoading || isLoadingDraft}
+              />
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleManagerReviewAction('approve')}
+                  disabled={!canReviewPr || reviewActionLoading}
+                  className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleManagerReviewAction('reject')}
+                  disabled={!canReviewPr || reviewActionLoading}
+                  className="rounded-md bg-rose-700 px-3 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleManagerReviewAction('send_back')}
+                  disabled={!canReviewPr || reviewActionLoading}
+                  className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Send Back
+                </button>
+              </div>
+
+              {!canReviewPr && prId ? (
+                <p className="text-xs text-slate-500">
+                  Review actions are available only for submitted PRs.
+                </p>
+              ) : null}
             </div>
           ) : null}
 
@@ -686,28 +937,33 @@ function CreatePrPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <button
-              type="submit"
-              disabled={isSaving || isSubmittingPr || isReadOnlyMode || isLoadingDraft}
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isSaving ? 'Saving Draft...' : 'Save Draft'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSubmitPr}
-              disabled={isSaving || isSubmittingPr || isReadOnlyMode || isLoadingDraft}
-              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {isSubmittingPr ? 'Submitting PR...' : 'Submit PR'}
-            </button>
-            <button
-              type="button"
-              onClick={resetForm}
-              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Reset
-            </button>
+            {canEditDraft ? (
+              <>
+                <button
+                  type="submit"
+                  disabled={isSaving || isSubmittingPr || isLoadingDraft}
+                  className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSaving ? 'Saving Draft...' : 'Save Draft'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSubmitPr}
+                  disabled={isSaving || isSubmittingPr || isLoadingDraft}
+                  className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {isSubmittingPr ? 'Submitting PR...' : 'Submit PR'}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Reset
+                </button>
+              </>
+            ) : null}
+
             {isReadOnlyMode ? (
               <button
                 type="button"
@@ -759,6 +1015,16 @@ function CreatePrPage() {
           ) : null}
         </aside>
       </div>
+
+      {prId ? (
+        <WorkflowTimeline
+          entries={workflowHistoryEntries}
+          loading={workflowHistoryLoading}
+          errorMessage={workflowHistoryError}
+          emptyMessage="No workflow history recorded for this PR yet."
+          showMetadata
+        />
+      ) : null}
     </div>
   )
 }

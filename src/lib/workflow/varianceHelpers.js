@@ -41,7 +41,9 @@ function normalizeLine(line = {}, index = 0) {
   const sourcePrLineId = String(line.source_pr_line_id || line.pr_line_id || '').trim()
   const itemId = String(line.item_id || line.itemId || '').trim()
   const itemName = String(line.item_name || line.itemName || '').trim()
-  const supplierId = String(line.supplier_id || line.supplierId || '').trim()
+  const supplierId = String(
+    line.supplier_id || line.supplierId || line.preferred_supplier_id || '',
+  ).trim()
   const supplierName = String(line.supplier_name || line.supplierName || '').trim()
 
   return {
@@ -54,8 +56,8 @@ function normalizeLine(line = {}, index = 0) {
     supplierId,
     supplierName,
     supplierNameNormalized: normalizeText(supplierName),
-    quantity: readNumber(line.qty ?? line.quantity),
-    unitPrice: readNumber(line.unit_price ?? line.unitPrice),
+    quantity: readNumber(line.ordered_qty ?? line.requested_qty ?? line.qty ?? line.quantity),
+    unitPrice: readNumber(line.unit_price ?? line.unitPrice ?? line.estimated_unit_price),
     leadTimeDays: readNumber(line.lead_time_days ?? line.leadTimeDays),
     specSignature: buildSpecSignature(line),
   }
