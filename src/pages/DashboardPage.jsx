@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatusBadge from '../components/StatusBadge'
 import { useAuth } from '../context/AuthContext'
-import { formatCurrency, formatDate } from '../lib/formatters'
+import { formatCurrency } from '../lib/formatters'
 import { fetchVisiblePrRecords } from '../lib/pr/prService'
 import { ROLE_LABELS } from '../lib/roles'
 import { PR_STATUSES } from '../lib/workflow/constants'
@@ -63,9 +63,6 @@ function DashboardPage() {
     const currentMonth = now.getMonth()
     const currentYear = now.getFullYear()
 
-    const draftCount = prRecords.filter(
-      (item) => normalizePrStatus(item.status) === PR_STATUSES.DRAFT,
-    ).length
     const submittedCount = prRecords.filter(
       (item) => normalizePrStatus(item.status) === PR_STATUSES.SUBMITTED,
     ).length
@@ -81,17 +78,21 @@ function DashboardPage() {
     const monthlySpend = approvedThisMonth.reduce((sum, item) => sum + getPrEstimatedTotal(item), 0)
 
     return [
-      { label: 'Visible PRs', value: prRecords.length, hint: 'Based on your role' },
-      { label: 'Draft PRs', value: draftCount, hint: 'Still editable' },
+      { label: 'Visible Requests', value: prRecords.length, hint: 'Based on your role' },
       { label: 'Submitted PRs', value: submittedCount, hint: 'Waiting for decision' },
-      { label: 'Approved This Month', value: approvedThisMonth.length, hint: formatCurrency(monthlySpend) },
+      { label: 'Monthly Spend', value: formatCurrency(monthlySpend), hint: 'Approved PRs this month' },
+      { label: 'Approved This Month', value: approvedThisMonth.length, hint: 'Current calendar month' },
     ]
   }, [prRecords])
 
   const spendByDepartment = useMemo(() => {
     const departmentMap = new Map()
 
-    prRecords.forEach((item) => {
+    const approvedPrRecords = prRecords.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.APPROVED,
+    )
+
+    approvedPrRecords.forEach((item) => {
       const key = item.department || 'Other'
       const total = getPrEstimatedTotal(item)
       departmentMap.set(key, (departmentMap.get(key) || 0) + total)
@@ -139,7 +140,6 @@ function DashboardPage() {
                   <th className="px-3 py-2.5 font-medium">PR Number</th>
                   <th className="px-3 py-2.5 font-medium">Purpose</th>
                   <th className="px-3 py-2.5 font-medium">Department</th>
-                  <th className="px-3 py-2.5 font-medium">Created</th>
                   <th className="px-3 py-2.5 font-medium">Estimated Total</th>
                   <th className="px-3 py-2.5 font-medium">Status</th>
                 </tr>
@@ -147,7 +147,7 @@ function DashboardPage() {
               <tbody className="bg-white">
                 {loading ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
                       Loading dashboard...
                     </td>
                   </tr>
@@ -155,7 +155,7 @@ function DashboardPage() {
 
                 {!loading && prRecords.length === 0 ? (
                   <tr>
-                    <td className="px-3 py-3 text-slate-500" colSpan={6}>
+                    <td className="px-3 py-3 text-slate-500" colSpan={5}>
                       No PR records found.
                     </td>
                   </tr>
@@ -167,7 +167,6 @@ function DashboardPage() {
                         <td className="px-3 py-3 font-medium text-slate-700">{item.pr_number || '-'}</td>
                         <td className="px-3 py-3 text-slate-700">{item.purpose || '-'}</td>
                         <td className="px-3 py-3 text-slate-600">{item.department || '-'}</td>
-                        <td className="px-3 py-3 text-slate-600">{formatDate(item.created_at)}</td>
                         <td className="px-3 py-3 text-slate-700">
                           {formatCurrency(getPrEstimatedTotal(item))}
                         </td>
@@ -183,10 +182,10 @@ function DashboardPage() {
         </div>
 
         <div>
-          <h3 className="text-lg font-semibold text-slate-900">Estimated Spend By Department</h3>
+          <h3 className="text-lg font-semibold text-slate-900">Approved Spend By Department</h3>
           <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-white p-4">
             {spendByDepartment.length === 0 ? (
-              <p className="text-sm text-slate-500">No spend data yet.</p>
+              <p className="text-sm text-slate-500">No approved PR spend data yet.</p>
             ) : (
               spendByDepartment.map((item) => (
                 <div
