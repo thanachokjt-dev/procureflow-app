@@ -68,6 +68,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/master_data_phase2.sql`
    - `supabase/workflow_history_phase3b.sql`
    - `supabase/pr_phase4a.sql`
+   - `supabase/pr_phase4b_submit_policy.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -82,6 +83,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - RLS policies for `staff`/`manager`/`admin` (legacy schema)
 5. If your project is already running previous phases, you can run only:
    - `supabase/pr_phase4a.sql`
+   - `supabase/pr_phase4b_submit_policy.sql`
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -190,6 +192,7 @@ src/
   pages/
     LoginPage.jsx
     DashboardPage.jsx
+    CreatePrPage.jsx
     NewRequestPage.jsx
     RequestsPage.jsx
     ManagerApprovalPage.jsx
@@ -206,4 +209,5 @@ supabase/
   master_data_phase2.sql
   workflow_history_phase3b.sql
   pr_phase4a.sql
+  pr_phase4b_submit_policy.sql
 ```

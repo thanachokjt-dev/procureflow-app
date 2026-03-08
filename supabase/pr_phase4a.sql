@@ -184,7 +184,7 @@ using (
 with check (
   public.current_user_role() in ('staff', 'requester')
   and requester_user_id = auth.uid()
-  and status = 'draft'
+  and status in ('draft', 'submitted')
 );
 
 drop policy if exists "PR headers update manager submitted" on public.pr_headers;

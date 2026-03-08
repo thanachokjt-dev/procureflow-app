@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { getPageLayoutConfig } from '../lib/layout/pageLayout'
 import { PAGE_KEYS, PAGE_ROLE_ACCESS, ROLE_LABELS, hasRoleAccess } from '../lib/roles'
 
 const navItems = [
@@ -10,7 +11,7 @@ const navItems = [
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.DASHBOARD],
   },
   {
-    to: '/create-pr',
+    to: '/new-request',
     label: 'Create PR',
     roles: PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST],
   },
@@ -43,11 +44,16 @@ const navItems = [
 
 function AppLayout() {
   const { user, profile, role, signOut } = useAuth()
+  const location = useLocation()
   const navigate = useNavigate()
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [signOutError, setSignOutError] = useState('')
 
   const visibleNavItems = navItems.filter((item) => hasRoleAccess(role, item.roles))
+  const { mode, mainSpacingClass, contentContainerClass } = getPageLayoutConfig({
+    pathname: location.pathname,
+    role,
+  })
 
   const handleSignOut = async () => {
     setSignOutError('')
@@ -66,7 +72,7 @@ function AppLayout() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <div className="mx-auto grid min-h-screen max-w-7xl md:grid-cols-[240px_1fr]">
+      <div className="grid min-h-screen w-full md:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="border-r border-slate-200 bg-slate-900 px-4 py-6 text-slate-100">
           <div className="mb-8 px-2">
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -116,7 +122,7 @@ function AppLayout() {
           ) : null}
         </aside>
 
-        <div className="flex flex-col">
+        <div className="flex min-w-0 flex-col">
           <header className="border-b border-slate-200 bg-white px-6 py-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -133,8 +139,11 @@ function AppLayout() {
             </div>
           </header>
 
-          <main className="p-6">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+          <main className={`min-w-0 ${mainSpacingClass}`}>
+            <div
+              data-layout-mode={mode}
+              className={`min-w-0 shadow-sm ${contentContainerClass}`}
+            >
               <Outlet />
             </div>
           </main>

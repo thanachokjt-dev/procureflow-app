@@ -30,14 +30,14 @@ function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route
-            path="/create-pr"
+            path="/new-request"
             element={
               <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST]}>
                 <CreatePrPage />
               </ProtectedRoute>
             }
           />
-          <Route path="/new-request" element={<Navigate to="/create-pr" replace />} />
+          <Route path="/create-pr" element={<Navigate to="/new-request" replace />} />
           <Route path="/requests" element={<RequestsPage />} />
           <Route
             path="/manager-approval"

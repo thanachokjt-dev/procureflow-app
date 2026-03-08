@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import { PrLinesCardEditor, PrLinesTableEditor } from '../components/pr/PrLinesEditors'
 import { useAuth } from '../context/AuthContext'
 import { formatCurrency } from '../lib/formatters'
 import { fetchActiveItems } from '../lib/masterData'
-import { createPrDraft, savePrLines } from '../lib/pr/prService'
+import { PR_STATUSES, WORKFLOW_ACTIONS } from '../lib/workflow/constants'
+import {
+  appendPrWorkflowHistory,
+  createPrDraft,
+  deletePrLine,
+  savePrLines,
+  updatePrDraftHeader,
+} from '../lib/pr/prService'
 
 const createLineDraft = () => ({
-  id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  local_id: `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  db_id: null,
   item_id: '',
   itemSearch: '',
   sku: '',
@@ -34,7 +43,7 @@ function getLineEstimatedTotal(line) {
 }
 
 function CreatePrPage() {
-  const { profile } = useAuth()
+  const { profile, user, role } = useAuth()
 
   const [formValues, setFormValues] = useState({
     department: profile?.department || '',
@@ -50,7 +59,11 @@ function CreatePrPage() {
   const [saveError, setSaveError] = useState('')
   const [saveSuccess, setSaveSuccess] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [isSubmittingPr, setIsSubmittingPr] = useState(false)
   const [lastSavedDraft, setLastSavedDraft] = useState(null)
+  const [activeDraftId, setActiveDraftId] = useState('')
+  const [activeDraftNumber, setActiveDraftNumber] = useState('')
+  const [pendingDeleteLineIds, setPendingDeleteLineIds] = useState([])
 
   useEffect(() => {
     const loadItems = async () => {
@@ -82,11 +95,11 @@ function CreatePrPage() {
     setFormValues((previous) => ({ ...previous, [fieldName]: value }))
   }
 
-  const handleLineFieldChange = (lineId, fieldName) => (event) => {
-    const value = event.target.value
-
+  const handleLineFieldChange = (lineId, fieldName, value) => {
     setLineItems((previous) =>
-      previous.map((line) => (line.id === lineId ? { ...line, [fieldName]: value } : line)),
+      previous.map((line) =>
+        line.local_id === lineId ? { ...line, [fieldName]: value } : line,
+      ),
     )
   }
 
@@ -109,13 +122,12 @@ function CreatePrPage() {
     })
   }
 
-  const handleSelectCatalogItem = (lineId) => (event) => {
-    const selectedItemId = event.target.value
+  const handleSelectCatalogItem = (lineId, selectedItemId) => {
     const selectedItem = catalogItems.find((item) => item.id === selectedItemId)
 
     setLineItems((previous) =>
       previous.map((line) => {
-        if (line.id !== lineId) {
+        if (line.local_id !== lineId) {
           return line
         }
 
@@ -145,7 +157,15 @@ function CreatePrPage() {
         return previous
       }
 
-      return previous.filter((line) => line.id !== lineId)
+      const lineToRemove = previous.find((line) => line.local_id === lineId)
+
+      if (lineToRemove?.db_id) {
+        setPendingDeleteLineIds((current) =>
+          current.includes(lineToRemove.db_id) ? current : [...current, lineToRemove.db_id],
+        )
+      }
+
+      return previous.filter((line) => line.local_id !== lineId)
     })
   }
 
@@ -161,6 +181,9 @@ function CreatePrPage() {
     setSaveError('')
     setSaveSuccess('')
     setLastSavedDraft(null)
+    setActiveDraftId('')
+    setActiveDraftNumber('')
+    setPendingDeleteLineIds([])
   }
 
   const validateForm = () => {
@@ -209,6 +232,24 @@ function CreatePrPage() {
 
   const handleSaveDraft = async (event) => {
     event.preventDefault()
+    await persistPr({ submitAfterSave: false })
+  }
+
+  const mapSavedLineToFormLine = (line) => ({
+    local_id: `line-${line.id || Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    db_id: line.id || null,
+    item_id: line.item_id || '',
+    itemSearch: '',
+    sku: line.sku || '',
+    item_name: line.item_name || '',
+    description: line.description || '',
+    unit: line.unit || '',
+    requested_qty: String(line.requested_qty || ''),
+    estimated_unit_price: String(line.estimated_unit_price ?? ''),
+    remarks: line.remarks || '',
+  })
+
+  const persistPr = async ({ submitAfterSave = false }) => {
     setSaveError('')
     setSaveSuccess('')
     setLastSavedDraft(null)
@@ -220,23 +261,65 @@ function CreatePrPage() {
       return
     }
 
-    setIsSaving(true)
+    if (submitAfterSave) {
+      setIsSubmittingPr(true)
+    } else {
+      setIsSaving(true)
+    }
 
-    const { data: draftHeader, error: createError } = await createPrDraft({
-      department: formValues.department,
-      purpose: formValues.purpose,
-      neededByDate: formValues.needed_by_date || null,
-      notes: formValues.notes,
-      requesterName: profile?.full_name || '',
-    })
+    let draftHeader = null
 
-    if (createError || !draftHeader?.id) {
-      setSaveError(createError?.message || 'Failed to create PR draft.')
-      setIsSaving(false)
-      return
+    if (activeDraftId) {
+      const { data: updatedHeader, error: updateError } = await updatePrDraftHeader(activeDraftId, {
+        department: formValues.department,
+        purpose: formValues.purpose,
+        neededByDate: formValues.needed_by_date || null,
+        notes: formValues.notes,
+        status: PR_STATUSES.DRAFT,
+      })
+
+      if (updateError || !updatedHeader?.id) {
+        setSaveError(updateError?.message || 'Failed to update PR draft header.')
+        setIsSaving(false)
+        setIsSubmittingPr(false)
+        return
+      }
+
+      draftHeader = updatedHeader
+    } else {
+      const { data: createdHeader, error: createError } = await createPrDraft({
+        department: formValues.department,
+        purpose: formValues.purpose,
+        neededByDate: formValues.needed_by_date || null,
+        notes: formValues.notes,
+        requesterName: profile?.full_name || user?.email || '',
+      })
+
+      if (createError || !createdHeader?.id) {
+        setSaveError(createError?.message || 'Failed to create PR draft.')
+        setIsSaving(false)
+        setIsSubmittingPr(false)
+        return
+      }
+
+      draftHeader = createdHeader
+    }
+
+    if (pendingDeleteLineIds.length > 0) {
+      for (const lineId of pendingDeleteLineIds) {
+        const { error: deleteError } = await deletePrLine(lineId)
+
+        if (deleteError) {
+          setSaveError(`Draft header saved, but failed to remove line: ${deleteError.message}`)
+          setIsSaving(false)
+          setIsSubmittingPr(false)
+          return
+        }
+      }
     }
 
     const linePayload = lineItems.map((line) => ({
+      id: line.db_id || null,
       item_id: line.item_id || null,
       sku: String(line.sku || '').trim() || null,
       item_name: String(line.item_name || '').trim(),
@@ -253,8 +336,61 @@ function CreatePrPage() {
     const { data: savedLines, error: lineError } = await savePrLines(draftHeader.id, linePayload)
 
     if (lineError) {
-      setSaveError(`Draft header created (${draftHeader.pr_number}) but lines failed: ${lineError.message}`)
+      setSaveError(`Draft header saved (${draftHeader.pr_number}) but lines failed: ${lineError.message}`)
       setIsSaving(false)
+      setIsSubmittingPr(false)
+      return
+    }
+
+    if (submitAfterSave) {
+      const { data: submittedHeader, error: submitError } = await updatePrDraftHeader(draftHeader.id, {
+        status: PR_STATUSES.SUBMITTED,
+      })
+
+      if (submitError || !submittedHeader?.id) {
+        setSaveError(
+          submitError?.message ||
+            'Draft saved, but failed to submit PR. Ensure submit policy SQL is applied.',
+        )
+        setIsSaving(false)
+        setIsSubmittingPr(false)
+        return
+      }
+
+      const { error: historyError } = await appendPrWorkflowHistory({
+        prId: submittedHeader.id,
+        action: WORKFLOW_ACTIONS.SUBMIT_PR,
+        actorUserId: user?.id,
+        actorRole: role,
+        comment: 'PR submitted by requester',
+        metadata: { source: 'new_request_page', status: PR_STATUSES.SUBMITTED },
+      })
+
+      if (historyError) {
+        setSaveError(
+          `PR submitted (${submittedHeader.pr_number}), but workflow history failed: ${historyError.message}`,
+        )
+      } else {
+        setSaveSuccess(`PR submitted successfully: ${submittedHeader.pr_number}`)
+      }
+
+      setLastSavedDraft({
+        ...submittedHeader,
+        lines: savedLines || [],
+      })
+      setValidationErrors([])
+      setLineItems([createLineDraft()])
+      setFormValues({
+        department: profile?.department || '',
+        purpose: '',
+        needed_by_date: '',
+        notes: '',
+      })
+      setPendingDeleteLineIds([])
+      setActiveDraftId('')
+      setActiveDraftNumber('')
+      setIsSaving(false)
+      setIsSubmittingPr(false)
       return
     }
 
@@ -263,15 +399,31 @@ function CreatePrPage() {
       ...draftHeader,
       lines: savedLines || [],
     })
+    setActiveDraftId(draftHeader.id)
+    setActiveDraftNumber(draftHeader.pr_number || '')
+    setLineItems((savedLines || []).map(mapSavedLineToFormLine))
+    setPendingDeleteLineIds([])
     setValidationErrors([])
     setIsSaving(false)
+    setIsSubmittingPr(false)
+  }
+
+  const handleSubmitPr = async (event) => {
+    event.preventDefault()
+
+    if (!user?.id) {
+      setSaveError('You must be signed in to submit a PR.')
+      return
+    }
+
+    await persistPr({ submitAfterSave: true })
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Create PR"
-        subtitle="Create and save a purchase request draft with one or more line items."
+        subtitle="Create a purchase request draft, then submit it for manager approval."
       />
 
       {itemsError ? (
@@ -303,11 +455,17 @@ function CreatePrPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <form
           onSubmit={handleSaveDraft}
-          className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4"
+          className="min-w-0 space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4 md:p-5"
         >
+          {activeDraftNumber ? (
+            <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-700">
+              Editing Draft: <span className="font-semibold">{activeDraftNumber}</span>
+            </div>
+          ) : null}
+
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">Department</label>
@@ -332,7 +490,9 @@ function CreatePrPage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium text-slate-700">Purpose</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Purpose / Request Title
+              </label>
               <textarea
                 rows={3}
                 value={formValues.purpose}
@@ -344,7 +504,9 @@ function CreatePrPage() {
             </div>
 
             <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium text-slate-700">Notes</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Notes / Business Justification
+              </label>
               <textarea
                 rows={2}
                 value={formValues.notes}
@@ -355,7 +517,7 @@ function CreatePrPage() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">PR Lines</h3>
               <button
@@ -367,128 +529,27 @@ function CreatePrPage() {
               </button>
             </div>
 
-            <div className="space-y-3">
-              {lineItems.map((line, index) => {
-                const filteredItems = getFilteredItemsForLine(line)
+            <PrLinesTableEditor
+              lineItems={lineItems}
+              itemsLoading={itemsLoading}
+              catalogItems={catalogItems}
+              getFilteredItemsForLine={getFilteredItemsForLine}
+              onFieldChange={handleLineFieldChange}
+              onSelectCatalogItem={handleSelectCatalogItem}
+              onRemoveLine={handleRemoveLine}
+              getLineEstimatedTotal={getLineEstimatedTotal}
+            />
 
-                return (
-                  <div key={line.id} className="rounded-md border border-slate-200 p-3">
-                    <div className="mb-2 flex items-center justify-between">
-                      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Line {index + 1}
-                      </p>
-                      {lineItems.length > 1 ? (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveLine(line.id)}
-                          className="text-xs font-medium text-rose-600 hover:text-rose-700"
-                        >
-                          Remove
-                        </button>
-                      ) : null}
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-6">
-                      <input
-                        type="text"
-                        value={line.itemSearch}
-                        onChange={handleLineFieldChange(line.id, 'itemSearch')}
-                        placeholder="Search item (SKU/name/brand/model)"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-3"
-                        disabled={itemsLoading || catalogItems.length === 0}
-                      />
-
-                      <select
-                        value={line.item_id}
-                        onChange={handleSelectCatalogItem(line.id)}
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-3"
-                        disabled={itemsLoading || catalogItems.length === 0}
-                      >
-                        {itemsLoading ? <option value="">Loading items...</option> : null}
-                        {!itemsLoading && catalogItems.length === 0 ? (
-                          <option value="">No active items found</option>
-                        ) : null}
-                        {!itemsLoading && catalogItems.length > 0 ? (
-                          <option value="">Select item from Item Master (optional)</option>
-                        ) : null}
-                        {filteredItems.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.sku} - {item.item_name}
-                          </option>
-                        ))}
-                      </select>
-
-                      <input
-                        type="text"
-                        value={line.sku}
-                        onChange={handleLineFieldChange(line.id, 'sku')}
-                        placeholder="SKU"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-2"
-                      />
-
-                      <input
-                        type="text"
-                        value={line.item_name}
-                        onChange={handleLineFieldChange(line.id, 'item_name')}
-                        placeholder="Item name"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-4"
-                        required
-                      />
-
-                      <textarea
-                        rows={2}
-                        value={line.description}
-                        onChange={handleLineFieldChange(line.id, 'description')}
-                        placeholder="Description"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-6"
-                      />
-
-                      <input
-                        type="text"
-                        value={line.unit}
-                        onChange={handleLineFieldChange(line.id, 'unit')}
-                        placeholder="Unit (pcs, box, set)"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-2"
-                        required
-                      />
-
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={line.requested_qty}
-                        onChange={handleLineFieldChange(line.id, 'requested_qty')}
-                        placeholder="Requested qty"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-2"
-                        required
-                      />
-
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={line.estimated_unit_price}
-                        onChange={handleLineFieldChange(line.id, 'estimated_unit_price')}
-                        placeholder="Estimated unit price (optional)"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-2"
-                      />
-
-                      <textarea
-                        rows={2}
-                        value={line.remarks}
-                        onChange={handleLineFieldChange(line.id, 'remarks')}
-                        placeholder="Remarks (optional)"
-                        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500 md:col-span-4"
-                      />
-
-                      <div className="flex items-center rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700 md:col-span-2">
-                        Line Total: {formatCurrency(getLineEstimatedTotal(line))}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <PrLinesCardEditor
+              lineItems={lineItems}
+              itemsLoading={itemsLoading}
+              catalogItems={catalogItems}
+              getFilteredItemsForLine={getFilteredItemsForLine}
+              onFieldChange={handleLineFieldChange}
+              onSelectCatalogItem={handleSelectCatalogItem}
+              onRemoveLine={handleRemoveLine}
+              getLineEstimatedTotal={getLineEstimatedTotal}
+            />
           </div>
 
           <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
@@ -499,10 +560,18 @@ function CreatePrPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
-              disabled={isSaving}
+              disabled={isSaving || isSubmittingPr}
               className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {isSaving ? 'Saving Draft...' : 'Save Draft'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmitPr}
+              disabled={isSaving || isSubmittingPr}
+              className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isSubmittingPr ? 'Submitting PR...' : 'Submit PR'}
             </button>
             <button
               type="button"
@@ -514,7 +583,7 @@ function CreatePrPage() {
           </div>
         </form>
 
-        <aside className="space-y-4">
+        <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
           <div className="rounded-lg border border-slate-200 bg-white p-4">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
               Draft Guidance
@@ -523,7 +592,7 @@ function CreatePrPage() {
               <li>1. Fill department and purpose first.</li>
               <li>2. Use Item Master search to auto-fill line details quickly.</li>
               <li>3. Free-text items are supported when no catalog item exists.</li>
-              <li>4. Save as draft now; submit will be added in next phase.</li>
+              <li>4. Save Draft keeps status as draft, Submit PR sends it to manager.</li>
             </ul>
           </div>
 
