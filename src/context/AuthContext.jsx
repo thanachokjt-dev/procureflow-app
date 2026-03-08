@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useState } from 'react'
 import { ROLES } from '../lib/roles'
+import { normalizeRole } from '../lib/workflow/roleHelpers'
 import { supabase } from '../lib/supabaseClient'
 
 const AuthContext = createContext(null)
@@ -93,7 +94,7 @@ export function AuthProvider({ children }) {
     return { error }
   }
 
-  const role = profile?.role || null
+  const role = normalizeRole(profile?.role || null) || null
 
   const value = {
     session,
@@ -104,7 +105,11 @@ export function AuthProvider({ children }) {
     isAuthenticated: Boolean(session),
     isAdmin: role === ROLES.ADMIN,
     isManager: role === ROLES.MANAGER,
-    isStaff: role === ROLES.STAFF,
+    isProcurement: role === ROLES.PROCUREMENT,
+    isAccounting: role === ROLES.ACCOUNTING,
+    isMdAssistant: role === ROLES.MD_ASSISTANT,
+    isRequester: role === ROLES.REQUESTER,
+    isStaff: role === ROLES.REQUESTER || role === ROLES.STAFF,
     loading,
     signInWithEmail,
     signOut,

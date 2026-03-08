@@ -3,7 +3,7 @@ import AppLayout from './components/AppLayout'
 import ProtectedRoute from './components/ProtectedRoute'
 import PublicRoute from './components/PublicRoute'
 import { useAuth } from './context/AuthContext'
-import { ROLES } from './lib/roles'
+import { PAGE_KEYS, PAGE_ROLE_ACCESS } from './lib/roles'
 import DashboardPage from './pages/DashboardPage'
 import ItemMasterPage from './pages/ItemMasterPage'
 import LoginPage from './pages/LoginPage'
@@ -11,6 +11,7 @@ import ManagerApprovalPage from './pages/ManagerApprovalPage'
 import NewRequestPage from './pages/NewRequestPage'
 import RequestsPage from './pages/RequestsPage'
 import SupplierMasterPage from './pages/SupplierMasterPage'
+import WorkflowDebugPage from './pages/WorkflowDebugPage'
 
 function FallbackRedirect() {
   const { isAuthenticated } = useAuth()
@@ -31,7 +32,7 @@ function App() {
           <Route
             path="/new-request"
             element={
-              <ProtectedRoute allowedRoles={[ROLES.STAFF, ROLES.ADMIN]}>
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST]}>
                 <NewRequestPage />
               </ProtectedRoute>
             }
@@ -40,7 +41,7 @@ function App() {
           <Route
             path="/manager-approval"
             element={
-              <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.MANAGER_APPROVAL]}>
                 <ManagerApprovalPage />
               </ProtectedRoute>
             }
@@ -48,7 +49,7 @@ function App() {
           <Route
             path="/supplier-master"
             element={
-              <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.SUPPLIER_MASTER]}>
                 <SupplierMasterPage />
               </ProtectedRoute>
             }
@@ -56,8 +57,16 @@ function App() {
           <Route
             path="/item-master"
             element={
-              <ProtectedRoute allowedRoles={[ROLES.MANAGER, ROLES.ADMIN]}>
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.ITEM_MASTER]}>
                 <ItemMasterPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/workflow-debug"
+            element={
+              <ProtectedRoute allowedRoles={PAGE_ROLE_ACCESS[PAGE_KEYS.WORKFLOW_DEBUG]}>
+                <WorkflowDebugPage />
               </ProtectedRoute>
             }
           />

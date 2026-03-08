@@ -1,38 +1,43 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { hasRoleAccess, ROLE_LABELS, ROLES } from '../lib/roles'
+import { PAGE_KEYS, PAGE_ROLE_ACCESS, ROLE_LABELS, hasRoleAccess } from '../lib/roles'
 
 const navItems = [
   {
     to: '/dashboard',
     label: 'Dashboard',
-    roles: [ROLES.STAFF, ROLES.MANAGER, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.DASHBOARD],
   },
   {
     to: '/new-request',
     label: 'New Request',
-    roles: [ROLES.STAFF, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.NEW_REQUEST],
   },
   {
     to: '/requests',
     label: 'Requests',
-    roles: [ROLES.STAFF, ROLES.MANAGER, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.REQUESTS],
   },
   {
     to: '/manager-approval',
     label: 'Manager Approval',
-    roles: [ROLES.MANAGER, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.MANAGER_APPROVAL],
   },
   {
     to: '/supplier-master',
     label: 'Supplier Master',
-    roles: [ROLES.MANAGER, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.SUPPLIER_MASTER],
   },
   {
     to: '/item-master',
     label: 'Item Master',
-    roles: [ROLES.MANAGER, ROLES.ADMIN],
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.ITEM_MASTER],
+  },
+  {
+    to: '/workflow-debug',
+    label: 'Workflow Debug',
+    roles: PAGE_ROLE_ACCESS[PAGE_KEYS.WORKFLOW_DEBUG],
   },
 ]
 

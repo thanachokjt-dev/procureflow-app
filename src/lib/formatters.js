@@ -20,17 +20,7 @@ export function formatDate(dateValue) {
 }
 
 export function formatStatus(status) {
-  if (!status) {
-    return ''
-  }
-
-  const normalized = String(status).toLowerCase()
-
-  if (normalized === 'pending') return 'Pending'
-  if (normalized === 'approved') return 'Approved'
-  if (normalized === 'rejected') return 'Rejected'
-
-  return status
+  return getPrStatusLabel(status)
 }
 
 export function formatPriority(priority) {
@@ -46,3 +36,4 @@ export function formatPriority(priority) {
 
   return priority
 }
+import { getPrStatusLabel } from './workflow/statusHelpers'

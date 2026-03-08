@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { formatCurrency, formatDate, formatStatus } from '../lib/formatters'
 import { fetchMyPurchaseRequests, getRequestTotal } from '../lib/procurementData'
 import { supabase } from '../lib/supabaseClient'
+import { PR_STATUS_LIST, PR_STATUSES } from '../lib/workflow/constants'
+import { getPrStatusLabel, normalizePrStatus } from '../lib/workflow/statusHelpers'
 
 function RequestsPage() {
   const { user } = useAuth()
@@ -90,13 +92,19 @@ function RequestsPage() {
   }, [user?.id])
 
   const summary = useMemo(() => {
-    const pendingCount = requests.filter((item) => item.status === 'pending').length
-    const approvedCount = requests.filter((item) => item.status === 'approved').length
-    const rejectedCount = requests.filter((item) => item.status === 'rejected').length
+    const submittedCount = requests.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.SUBMITTED,
+    ).length
+    const approvedCount = requests.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.APPROVED,
+    ).length
+    const rejectedCount = requests.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.REJECTED,
+    ).length
 
     return {
       total: requests.length,
-      pending: pendingCount,
+      submitted: submittedCount,
       approved: approvedCount,
       rejected: rejectedCount,
     }
@@ -122,7 +130,8 @@ function RequestsPage() {
           .toLowerCase()
           .includes(normalizedSearch)
 
-      const matchesStatus = statusFilter === 'all' || item.status === statusFilter
+      const matchesStatus =
+        statusFilter === 'all' || normalizePrStatus(item.status) === statusFilter
 
       const matchesDepartment =
         departmentFilter === 'all' || item.department === departmentFilter
@@ -150,8 +159,8 @@ function RequestsPage() {
           <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.total}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Pending</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.pending}</p>
+          <p className="text-xs uppercase tracking-wide text-slate-500">Submitted</p>
+          <p className="mt-1 text-2xl font-semibold text-slate-900">{summary.submitted}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs uppercase tracking-wide text-slate-500">Approved</p>
@@ -191,9 +200,11 @@ function RequestsPage() {
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
         >
           <option value="all">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
+          {PR_STATUS_LIST.map((status) => (
+            <option key={status} value={status}>
+              {getPrStatusLabel(status)}
+            </option>
+          ))}
         </select>
 
         <select
@@ -272,7 +283,7 @@ function RequestsPage() {
                       {formatCurrency(getRequestTotal(item))}
                     </td>
                     <td className="px-3 py-3">
-                      <StatusBadge text={formatStatus(item.status)} />
+                      <StatusBadge text={formatStatus(item.status)} status={item.status} />
                     </td>
                     <td className="px-3 py-3 text-slate-600">
                       {item.manager_comment || '-'}

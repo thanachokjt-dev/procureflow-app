@@ -2,17 +2,24 @@
 
 ProcureFlow is a beginner-friendly internal procurement app with:
 - Supabase email/password authentication
-- Role-based access control (`staff`, `manager`, `admin`)
+- Role-based access control (`requester`, `manager`, `procurement`, `md_assistant`, `accounting`, `admin`)
 - Row Level Security policies in PostgreSQL
 - Supplier Master + Item Master + Item-Supplier Mapping
+- Centralized workflow constants (roles, PR/PO statuses, actions, document types)
+- Reusable PR vs PO variance comparison helpers for future conversion flow
+- Transition + role/action guard helpers for consistent workflow validation
 
 ## Features
 - Sign in / sign out with session persistence
 - Protected routes (`/login` only for unauthenticated users)
 - Role-based route and sidebar menu visibility
-- Staff can create requests and view only their own requests
+- Requester can create requests and view only their own requests
 - Manager can view pending requests and approve/reject
 - Admin can access everything
+- Optional internal Workflow Debug page for Procurement/Admin
+- Reusable workflow history timeline (`pr` / `po`) for internal tracking
+- Internal variance debug surface for Procurement/Admin
+- Internal guard checker for action permissions and status transitions
 - Manager/Admin can manage Supplier Master and Item Master
 - Manager/Admin can manage Item-Supplier Mapping (one preferred supplier per item)
 - Manager/Admin can import Supplier and Item CSV files with preview and upsert
@@ -55,6 +62,7 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `supabase/procurement_schema.sql`
    - `supabase/master_data_phase1.sql`
    - `supabase/master_data_phase2.sql`
+   - `supabase/workflow_history_phase3b.sql`
 4. These scripts create:
    - `profiles`
    - `purchase_requests`
@@ -62,7 +70,8 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    - `suppliers`
    - `items`
    - `item_supplier_map`
-   - RLS policies for `staff`, `manager`, `admin`
+   - `workflow_history`
+   - RLS policies for `staff`/`manager`/`admin` (legacy schema)
 
 ## 4) Create Users and Assign Roles
 1. Go to `Authentication > Users` and create users with email/password
@@ -73,6 +82,8 @@ ProcureFlow is a beginner-friendly internal procurement app with:
    update public.profiles set role = 'admin' where id = '<admin-user-uuid>';
    ```
 4. Any user not updated stays `staff` by default
+5. App compatibility note:
+   - Legacy `staff` is treated as `requester` in the frontend workflow helpers
 
 ## 5) Install and Run App
 1. Install dependencies:
@@ -131,6 +142,7 @@ src/
   components/
     AppLayout.jsx
     ItemSupplierMappingModal.jsx
+    WorkflowTimeline.jsx
     ProtectedRoute.jsx
     PublicRoute.jsx
     PageHeader.jsx
@@ -143,6 +155,14 @@ src/
     procurementData.js
     roles.js
     supabaseClient.js
+    workflow/
+      constants.js
+      guardHelpers.js
+      historyService.js
+      roleHelpers.js
+      statusHelpers.js
+      varianceConstants.js
+      varianceHelpers.js
   pages/
     LoginPage.jsx
     DashboardPage.jsx
@@ -151,6 +171,7 @@ src/
     ManagerApprovalPage.jsx
     SupplierMasterPage.jsx
     ItemMasterPage.jsx
+    WorkflowDebugPage.jsx
   App.jsx
   main.jsx
   index.css
@@ -159,4 +180,5 @@ supabase/
   procurement_schema.sql
   master_data_phase1.sql
   master_data_phase2.sql
+  workflow_history_phase3b.sql
 ```

@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext'
 import { formatCurrency, formatStatus } from '../lib/formatters'
 import { fetchVisiblePurchaseRequests, getRequestTotal } from '../lib/procurementData'
 import { ROLE_LABELS } from '../lib/roles'
+import { PR_STATUSES } from '../lib/workflow/constants'
+import { normalizePrStatus } from '../lib/workflow/statusHelpers'
 
 function DashboardPage() {
   const { profile, role } = useAuth()
@@ -38,9 +40,11 @@ function DashboardPage() {
     const currentMonth = now.getMonth()
     const currentYear = now.getFullYear()
 
-    const pendingCount = requests.filter((item) => item.status === 'pending').length
+    const submittedCount = requests.filter(
+      (item) => normalizePrStatus(item.status) === PR_STATUSES.SUBMITTED,
+    ).length
     const approvedThisMonth = requests.filter((item) => {
-      if (item.status !== 'approved') {
+      if (normalizePrStatus(item.status) !== PR_STATUSES.APPROVED) {
         return false
       }
 
@@ -58,7 +62,7 @@ function DashboardPage() {
 
     return [
       { label: 'Visible Requests', value: requests.length, hint: 'Based on your role' },
-      { label: 'Pending Approval', value: pendingCount, hint: 'Waiting for decision' },
+      { label: 'Submitted PRs', value: submittedCount, hint: 'Waiting for decision' },
       { label: 'Monthly Spend', value: formatCurrency(monthlySpend), hint: 'Approved only' },
       {
         label: 'Approved This Month',
@@ -155,7 +159,7 @@ function DashboardPage() {
                           {formatCurrency(getRequestTotal(item))}
                         </td>
                         <td className="px-3 py-3">
-                          <StatusBadge text={formatStatus(item.status)} />
+                          <StatusBadge text={formatStatus(item.status)} status={item.status} />
                         </td>
                       </tr>
                     ))
@@ -192,7 +196,7 @@ function DashboardPage() {
           Access Rules
         </h3>
         <p className="mt-1 text-sm text-slate-600">
-          Staff: own requests. Manager: pending requests. Admin: full access.
+          Requester: own requests. Manager: pending/submitted approvals. Admin: full access.
         </p>
       </section>
     </div>

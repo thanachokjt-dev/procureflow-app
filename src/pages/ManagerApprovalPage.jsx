@@ -8,6 +8,8 @@ import {
   REQUEST_STATUS,
   setRequestDecision,
 } from '../lib/procurementData'
+import { PR_STATUSES } from '../lib/workflow/constants'
+import { getPrStatusLabel } from '../lib/workflow/statusHelpers'
 
 function ManagerApprovalPage() {
   const [pendingRequests, setPendingRequests] = useState([])
@@ -80,7 +82,7 @@ function ManagerApprovalPage() {
     <div className="space-y-6">
       <PageHeader
         title="Manager Approval"
-        subtitle="Review pending requests and approve or reject them."
+        subtitle="Review submitted requests and approve or reject them."
       />
 
       {errorMessage ? (
@@ -89,11 +91,11 @@ function ManagerApprovalPage() {
         </div>
       ) : null}
 
-      {loading ? <p className="text-sm text-slate-500">Loading pending requests...</p> : null}
+      {loading ? <p className="text-sm text-slate-500">Loading submitted requests...</p> : null}
 
       {!loading && pendingRequests.length === 0 ? (
         <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          No pending requests found.
+          No submitted requests found.
         </div>
       ) : null}
 
@@ -105,7 +107,10 @@ function ManagerApprovalPage() {
           >
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-lg font-semibold text-slate-900">{item.title}</h3>
-              <StatusBadge text="Pending" />
+              <StatusBadge
+                status={item.status || PR_STATUSES.SUBMITTED}
+                text={getPrStatusLabel(item.status || PR_STATUSES.SUBMITTED)}
+              />
             </div>
 
             <div className="mt-3 grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
